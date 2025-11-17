@@ -1,0 +1,4 @@
+streamlit
+loguru
+pydantic_settings
+langgraph

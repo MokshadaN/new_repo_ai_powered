@@ -1,0 +1,195 @@
+"""
+Vector store manager - FAISS only
+"""
+from typing import Dict, List, Union
+
+import numpy as np
+
+from backend.vector_store.faiss_store import FAISSStore
+from backend.config.settings import settings
+from backend.utils.logger import app_logger as logger
+
+
+class VectorStoreManager:
+    """Manage FAISS vector stores for text, images, faces, and objects."""
+
+    def __init__(self):
+        logger.info("Initializing FAISS vector stores")
+
+        self.faiss_text = FAISSStore("text_faiss", settings.embedding_dimension)  # 1024
+        self.faiss_images = FAISSStore("image_faiss", settings.image_embedding_dimension)  # 768
+        self.faiss_faces = FAISSStore("face_faiss", settings.face_embedding_dimension)  # 512
+        self.faiss_objects = FAISSStore("object_faiss", settings.object_embedding_dimension)  # 768
+
+        logger.info(
+            "Vector stores ready (Text: %dD, Image: %dD, Face: %dD, Object: %dD)",
+            settings.embedding_dimension,
+            settings.image_embedding_dimension,
+            settings.face_embedding_dimension,
+            settings.object_embedding_dimension,
+        )
+
+    # Helpers
+    # def ensure_correct_dimension(
+    #     self, embedding: Union[List[float], List[List[float]]], expected_dim: int
+    # ) -> Union[List[float], List[List[float]]]:
+    #     """
+    #     Ensure embedding(s) match expected dimension by truncating or padding.
+    #     Accepts a single embedding or a list of embeddings.
+    #     """
+    #     is_single = isinstance(embedding[0], (float, int))
+    #     embeddings = [embedding] if is_single else embedding
+
+    #     fixed: List[List[float]] = []
+    #     for emb in embeddings:
+    #         arr = np.array(emb).flatten()
+    #         current_dim = len(arr)
+    #         if current_dim == expected_dim:
+    #             fixed.append(arr.tolist())
+    #         elif current_dim > expected_dim:
+    #             logger.warning("Embedding truncated from %d to %d", current_dim, expected_dim)
+    #             fixed.append(arr[:expected_dim].tolist())
+    #         else:
+    #             logger.warning("Embedding padded from %d to %d", current_dim, expected_dim)
+    #             padded = np.zeros(expected_dim)
+    #             padded[:current_dim] = arr
+    #             fixed.append(padded.tolist())
+
+    #     return fixed[0] if is_single else fixed
+
+    # # Text operations
+    # def store_text(self, embedding: List[float], metadata: Dict) -> bool:
+    #     file_path = metadata.get("file_path", "unknown")
+    #     logger.info("Storing text embedding(s) for: %s", file_path)
+
+    #     is_single = isinstance(embedding[0], (float, int))
+    #     embeddings = [embedding] if is_single else embedding
+
+    #     fixed_embeddings = [
+    #         self.ensure_correct_dimension(e, settings.embedding_dimension) for e in embeddings
+    #     ]
+
+    #     metadatas: List[Dict] = []
+    #     for idx, _ in enumerate(fixed_embeddings):
+    #         chunk_meta = metadata.copy()
+    #         chunk_meta["chunk_id"] = idx
+    #         chunk_meta["total_chunks"] = len(fixed_embeddings)
+    #         if "chunks" in chunk_meta and isinstance(chunk_meta["chunks"], list):
+    #             if idx < len(chunk_meta["chunks"]):
+    #                 chunk_meta["chunk_content"] = chunk_meta["chunks"][idx]
+    #             del chunk_meta["chunks"]
+    #         metadatas.append(chunk_meta)
+
+    #     success = self.faiss_text.store(fixed_embeddings, metadatas)
+    #     logger.info("Stored %d text chunk(s) in FAISS", len(fixed_embeddings))
+    #     return success
+
+    # def search_text(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
+    #     query_embedding = self.ensure_correct_dimension(query_embedding, settings.embedding_dimension)
+    #     if isinstance(query_embedding, list) and isinstance(query_embedding[0], list):
+    #         query_embedding = query_embedding[0]
+
+    #     top_k = top_k or settings.top_k_results
+    #     return self.faiss_text.search(query_embedding, top_k)
+
+    # # Image operations
+    # def store_images(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
+    #     for meta in metadata:
+    #         logger.info("Storing image embedding for: %s", meta.get("file_path", "unknown"))
+
+    #     processed = [
+    #         self.ensure_correct_dimension(e, settings.image_embedding_dimension) for e in embeddings
+    #     ]
+    #     return self.faiss_images.store(processed, metadata)
+
+    # def search_images(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
+    #     query_embedding = self.ensure_correct_dimension(
+    #         query_embedding, settings.image_embedding_dimension
+    #     )
+    #     top_k = top_k or settings.top_k_results
+    #     return self.faiss_images.search(query_embedding, top_k)
+
+    # def search_images_by_text(
+    #     self, text_embedding: List[float], top_k: int | None = None
+    # ) -> List[Dict]:
+    #     """
+    #     Cross-modal search (text -> image).
+    #     If a 1024D text embedding is provided, project to 768D via truncation.
+    #     """
+    #     text_embedding_array = np.array(text_embedding).flatten()
+    #     if len(text_embedding_array) == settings.embedding_dimension:
+    #         projected = text_embedding_array[: settings.image_embedding_dimension]
+    #         logger.info("Projected text embedding from 1024D to 768D for cross-modal search")
+    #         return self.search_images(projected.tolist(), top_k)
+    #     return self.search_images(text_embedding, top_k)
+
+    # # Face operations
+    # def store_faces(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
+    #     for meta in metadata:
+    #         logger.info("Storing face embedding for: %s", meta.get("image", "unknown"))
+
+    #     processed = [
+    #         self.ensure_correct_dimension(e, settings.face_embedding_dimension) for e in embeddings
+    #     ]
+    #     return self.faiss_faces.store(processed, metadata)
+
+    # def search_faces(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
+    #     query_embedding = self.ensure_correct_dimension(
+    #         query_embedding, settings.face_embedding_dimension
+    #     )
+    #     if isinstance(query_embedding, list) and isinstance(query_embedding[0], list):
+    #         query_embedding = query_embedding[0]
+
+    #     top_k = top_k or settings.top_k_results
+    #     results = self.faiss_faces.search(query_embedding, top_k)
+    #     if results:
+    #         similarities = [r.get("similarity", 0) for r in results]
+    #         logger.info(
+    #             "Face search similarity range: min=%.4f, max=%.4f",
+    #             min(similarities),
+    #             max(similarities),
+    #         )
+    #     return results
+
+    # # Object operations
+    # def store_objects(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
+    #     for meta in metadata:
+    #         logger.info("Storing object embeddings for: %s", meta.get("image", "unknown"))
+
+    #     processed = [
+    #         self.ensure_correct_dimension(e, settings.object_embedding_dimension) for e in embeddings
+    #     ]
+    #     return self.faiss_objects.store(processed, metadata)
+
+    # def search_objects(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
+    #     query_embedding = self.ensure_correct_dimension(
+    #         query_embedding, settings.object_embedding_dimension
+    #     )
+    #     top_k = top_k or settings.top_k_results
+    #     return self.faiss_objects.search(query_embedding, top_k)
+
+    # # Stats & helpers
+    # def get_statistics(self) -> Dict:
+    #     return {
+    #         "faiss_text_count": self.faiss_text.get_count(),
+    #         "faiss_image_count": self.faiss_images.get_count(),
+    #         "faiss_face_count": self.faiss_faces.get_count(),
+    #         "faiss_object_count": self.faiss_objects.get_count(),
+    #     }
+
+    # def get_dimension_info(self) -> Dict:
+    #     return {
+    #         "text_embedding_dim": settings.embedding_dimension,
+    #         "image_embedding_dim": settings.image_embedding_dimension,
+    #         "face_embedding_dim": settings.face_embedding_dimension,
+    #         "object_embedding_dim": settings.object_embedding_dimension,
+    #     }
+
+    def check_file_exists(self, file_path: str) -> bool:
+        """Check FAISS metadata stores for a given file path."""
+        def contains_path(metadata_list: List[Dict]) -> bool:
+            return any(meta.get("file_path") == file_path for meta in metadata_list)
+
+        return contains_path(self.faiss_text.metadata_store) or contains_path(
+            self.faiss_images.metadata_store
+        )
