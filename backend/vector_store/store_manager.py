@@ -30,59 +30,69 @@ class VectorStoreManager:
         )
 
     # Helpers
-    # def ensure_correct_dimension(
-    #     self, embedding: Union[List[float], List[List[float]]], expected_dim: int
-    # ) -> Union[List[float], List[List[float]]]:
-    #     """
-    #     Ensure embedding(s) match expected dimension by truncating or padding.
-    #     Accepts a single embedding or a list of embeddings.
-    #     """
-    #     is_single = isinstance(embedding[0], (float, int))
-    #     embeddings = [embedding] if is_single else embedding
+    def ensure_correct_dimension(
+        self, embedding: Union[List[float], List[List[float]]], expected_dim: int
+    ) -> Union[List[float], List[List[float]]]:
+        """
+        Ensure embedding(s) match expected dimension by truncating or padding.
+        Accepts a single embedding or a list of embeddings.
+        """
+        is_single = isinstance(embedding[0], (float, int))
+        embeddings = [embedding] if is_single else embedding
 
-    #     fixed: List[List[float]] = []
-    #     for emb in embeddings:
-    #         arr = np.array(emb).flatten()
-    #         current_dim = len(arr)
-    #         if current_dim == expected_dim:
-    #             fixed.append(arr.tolist())
-    #         elif current_dim > expected_dim:
-    #             logger.warning("Embedding truncated from %d to %d", current_dim, expected_dim)
-    #             fixed.append(arr[:expected_dim].tolist())
-    #         else:
-    #             logger.warning("Embedding padded from %d to %d", current_dim, expected_dim)
-    #             padded = np.zeros(expected_dim)
-    #             padded[:current_dim] = arr
-    #             fixed.append(padded.tolist())
+        fixed: List[List[float]] = []
+        for emb in embeddings:
+            arr = np.array(emb).flatten()
+            current_dim = len(arr)
+            if current_dim == expected_dim:
+                fixed.append(arr.tolist())
+            elif current_dim > expected_dim:
+                logger.warning("Embedding truncated from %d to %d", current_dim, expected_dim)
+                fixed.append(arr[:expected_dim].tolist())
+            else:
+                logger.warning("Embedding padded from %d to %d", current_dim, expected_dim)
+                padded = np.zeros(expected_dim)
+                padded[:current_dim] = arr
+                fixed.append(padded.tolist())
 
-    #     return fixed[0] if is_single else fixed
+        return fixed[0] if is_single else fixed
 
-    # # Text operations
-    # def store_text(self, embedding: List[float], metadata: Dict) -> bool:
-    #     file_path = metadata.get("file_path", "unknown")
-    #     logger.info("Storing text embedding(s) for: %s", file_path)
+    def store_text(self, embedding: List[float], chunks: List[str], file_path: str) -> bool:
+        """
+        Store text embeddings (per chunk) with chunk-specific metadata.
+        `embedding` can be a single vector or a list of vectors aligned to `chunks`.
+        """
+        logger.info(f"Storing text embedding(s) for: {file_path}")
 
-    #     is_single = isinstance(embedding[0], (float, int))
-    #     embeddings = [embedding] if is_single else embedding
+        is_single = isinstance(embedding[0], (float, int))
+        embeddings = [embedding] if is_single else embedding
+        chunk_texts = chunks or []
 
-    #     fixed_embeddings = [
-    #         self.ensure_correct_dimension(e, settings.embedding_dimension) for e in embeddings
-    #     ]
+        fixed_embeddings = [
+            self.ensure_correct_dimension(e, settings.embedding_dimension)
+            for e in embeddings
+        ]
 
-    #     metadatas: List[Dict] = []
-    #     for idx, _ in enumerate(fixed_embeddings):
-    #         chunk_meta = metadata.copy()
-    #         chunk_meta["chunk_id"] = idx
-    #         chunk_meta["total_chunks"] = len(fixed_embeddings)
-    #         if "chunks" in chunk_meta and isinstance(chunk_meta["chunks"], list):
-    #             if idx < len(chunk_meta["chunks"]):
-    #                 chunk_meta["chunk_content"] = chunk_meta["chunks"][idx]
-    #             del chunk_meta["chunks"]
-    #         metadatas.append(chunk_meta)
+        total_chunks = len(fixed_embeddings)
+        metadatas: List[Dict] = []
+        for idx, emb in enumerate(fixed_embeddings):
+            text = chunk_texts[idx] if idx < len(chunk_texts) else f"Chunk {idx + 1}"
+            metadatas.append({
+                "file_path": file_path,
+                "type": "text",
+                "chunk_id": idx,
+                "total_chunks": total_chunks,
+                "chunk_content": text,
+                "embedding_dim": len(emb),
+            })
+        print("Metadata of faiss text store")
+        print(metadatas[0])
+        success = True
 
-    #     success = self.faiss_text.store(fixed_embeddings, metadatas)
-    #     logger.info("Stored %d text chunk(s) in FAISS", len(fixed_embeddings))
-    #     return success
+        success = success and self.faiss_text.store(fixed_embeddings, metadatas)
+        logger.info(f"Stored {len(fixed_embeddings)} chunks in FAISS")
+
+        return success
 
     # def search_text(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
     #     query_embedding = self.ensure_correct_dimension(query_embedding, settings.embedding_dimension)
@@ -93,14 +103,14 @@ class VectorStoreManager:
     #     return self.faiss_text.search(query_embedding, top_k)
 
     # # Image operations
-    # def store_images(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
-    #     for meta in metadata:
-    #         logger.info("Storing image embedding for: %s", meta.get("file_path", "unknown"))
+    def store_images(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
+        for meta in metadata:
+            logger.info("Storing image embedding for: %s", meta.get("file_path", "unknown"))
 
-    #     processed = [
-    #         self.ensure_correct_dimension(e, settings.image_embedding_dimension) for e in embeddings
-    #     ]
-    #     return self.faiss_images.store(processed, metadata)
+        processed = [
+            self.ensure_correct_dimension(e, settings.image_embedding_dimension) for e in embeddings
+        ]
+        return self.faiss_images.store(processed, metadata)
 
     # def search_images(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
     #     query_embedding = self.ensure_correct_dimension(

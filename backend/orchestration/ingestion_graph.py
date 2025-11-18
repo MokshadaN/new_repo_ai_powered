@@ -2,13 +2,13 @@ from typing import Dict, Any, List, Literal, Any
 from langgraph.graph import StateGraph, END, START
 # from backend.orchestration.state_models import IngestionState
 from backend.ingestion.file_scanner import FileScanner
-# from backend.processors.text_processor import TextProcessor
-# from backend.processors.image_processor import ImageProcessor
-# from backend.processors.ocr_processor import OCRProcessor
+from backend.processors.text_processor import TextProcessor
+from backend.processors.image_processors import ImageProcessor
+from backend.processors.ocr_processor import OCRProcessor
 from backend.embeddings.embedding_manager import EmbeddingManager
 # from backend.detection.face_detector import FaceDetector
 # from backend.detection.object_detector import ObjectDetector
-# from backend.llm.local_llm import VisionLLM
+from backend.llm.local_llm import VisionLLM
 from backend.vector_store.store_manager import VectorStoreManager
 from backend.utils.logger import app_logger as logger
 from typing import TypedDict, Any, List, Optional, Literal, Dict, Any, Any
@@ -51,6 +51,9 @@ class IngestionState(TypedDict):
     total_files: int
     errors: List[str]
 
+    texts: Optional[List[str]]
+    text_chunks : Optional[List[str]]
+
 
 class IngestionPipeline:
     """LangGraph-based file ingestion pipeline"""
@@ -62,19 +65,19 @@ class IngestionPipeline:
         # print("I_1")
         self.file_scanner = FileScanner()
         # print("I_2")
-        # self.text_processor = TextProcessor()
+        self.text_processor = TextProcessor()
         # print("I_3")
-        # self.image_processor = ImageProcessor()
+        self.image_processor = ImageProcessor()
         # print("I_4")
-        # self.ocr_processor = OCRProcessor()
+        self.ocr_processor = OCRProcessor()
         # print("I_5")
-        # self.embedding_manager = EmbeddingManager()
+        self.embedding_manager = EmbeddingManager()
         # print("I_6")
         # self.face_detector = FaceDetector()
         # print("I_7")
         # self.object_detector = ObjectDetector()
         # print("I_8")
-        # self.vision_llm = VisionLLM()
+        self.vision_llm = VisionLLM()
         # print("I_9")
         self.store_manager = VectorStoreManager()
         # print("I_10")
@@ -95,24 +98,24 @@ class IngestionPipeline:
         workflow.add_node("file_type_splitter", self.file_type_splitter)
         
         # # Text path nodes
-        # workflow.add_node("process_text", self.process_text)
-        # workflow.add_node("generate_text_embedding", self.generate_text_embedding)
-        # workflow.add_node("store_text_faiss", self.store_text_faiss)
-        # workflow.add_node("extract_images_from_text", self.extract_images_from_text)
+        workflow.add_node("process_text", self.process_text)
+        workflow.add_node("generate_text_embedding", self.generate_text_embedding)
+        workflow.add_node("store_text_faiss", self.store_text_faiss)
+        workflow.add_node("extract_images_from_text", self.extract_images_from_text)
         
         # # Image path nodes
-        # workflow.add_node("prepare_images", self.prepare_images)
-        # workflow.add_node("generate_image_embeddings", self.generate_image_embeddings)
-        # workflow.add_node("store_images_faiss", self.store_images_faiss)
-        # workflow.add_node("generate_image_context_llm", self.generate_image_context_llm)
-        # workflow.add_node("store_context_text_faiss", self.store_context_text_faiss)
+        workflow.add_node("prepare_images", self.prepare_images)
+        workflow.add_node("generate_image_embeddings", self.generate_image_embeddings)
+        workflow.add_node("store_images_faiss", self.store_images_faiss)
+        workflow.add_node("generate_image_context_llm", self.generate_image_context_llm)
+        workflow.add_node("store_context_text_faiss", self.store_context_text_faiss)
         # workflow.add_node("detect_faces", self.detect_faces)
         # workflow.add_node("store_faces_faiss", self.store_faces_faiss)
         # workflow.add_node("detect_objects", self.detect_objects)
         # workflow.add_node("store_objects_faiss", self.store_objects_faiss)
         
         # # Progress tracking
-        # workflow.add_node("increment_progress", self.increment_progress)
+        workflow.add_node("increment_progress", self.increment_progress)
         
         # Define edges
         workflow.set_entry_point("scan_and_segregate")
@@ -140,27 +143,41 @@ class IngestionPipeline:
         )
         
         # # Text processing path
-        workflow.add_edge("process_text", END)
-        # workflow.add_edge("process_text", "generate_text_embedding")
-        # workflow.add_edge("generate_text_embedding", "store_text_faiss")
-        # workflow.add_edge("store_text_faiss", "extract_images_from_text")
+        # workflow.add_edge("process_text", END)
+        workflow.add_edge("process_text", "generate_text_embedding")
+        # workflow.add_edge("generate_text_embedding", END)
+        workflow.add_edge("generate_text_embedding", "store_text_faiss")
+        # workflow.add_edge("store_text_faiss", END)
+        workflow.add_edge("store_text_faiss", "extract_images_from_text")
         
         # # Extract images decision
         # workflow.add_conditional_edges(
         #     "extract_images_from_text",
         #     self.route_after_text_extraction,
         #     {
-        #         "process_images": "prepare_images",
-        #         "next_file": "increment_progress"
+        #         "process_images": END,
+        #         "next_file": END
         #     }
         # )
+        workflow.add_conditional_edges(
+            "extract_images_from_text",
+            self.route_after_text_extraction,
+            {
+                "process_images": "prepare_images",
+                "next_file": "increment_progress"
+            }
+        )
         
         # # Image processing path (parallel branches)
-        workflow.add_edge("prepare_images", END)
-        # workflow.add_edge("prepare_images", "generate_image_embeddings")
-        # workflow.add_edge("generate_image_embeddings", "store_images_faiss")
-        # workflow.add_edge("store_images_faiss", "generate_image_context_llm")
-        # workflow.add_edge("generate_image_context_llm", "store_context_text_faiss")
+        # workflow.add_edge("prepare_images", END)
+        workflow.add_edge("prepare_images", "generate_image_embeddings")
+        # workflow.add_edge("generate_image_embeddings", END)
+        workflow.add_edge("generate_image_embeddings", "store_images_faiss")
+        workflow.add_edge("store_images_faiss", "generate_image_context_llm")
+        # workflow.add_edge("store_images_faiss", END)
+        # workflow.add_edge("generate_image_context_llm", END)
+        workflow.add_edge("generate_image_context_llm", "store_context_text_faiss")
+        workflow.add_edge("store_context_text_faiss", END)
         # workflow.add_edge("store_context_text_faiss", "detect_faces")
         # workflow.add_edge("detect_faces", "store_faces_faiss")
         # workflow.add_edge("store_faces_faiss", "detect_objects")
@@ -168,7 +185,7 @@ class IngestionPipeline:
         # workflow.add_edge("store_objects_faiss", "increment_progress")
         
         # # Loop back
-        # workflow.add_edge("increment_progress", "get_next_file")
+        workflow.add_edge("increment_progress", "get_next_file")
         
         return workflow
     
@@ -237,6 +254,75 @@ class IngestionPipeline:
                 "current_file_type": None
             }
     
+    def generate_text_embedding(self, state: IngestionState) -> IngestionState:
+        """Generate embedding for text"""
+        logger.info("Generating text embedding")
+        try:
+            extracted = state.get("extracted_text")
+            if not extracted:
+                logger.warning("No extracted_text available for embedding")
+                return {}
+
+            result = self.embedding_manager.generate_text_embedding(extracted)
+
+            if isinstance(result, dict):
+                embedding = result.get("embeddings")
+                texts = result.get("texts")
+            elif isinstance(result, tuple) and len(result) >= 2:
+                embedding, texts = result[0], result[1]
+            else:
+                embedding = result
+                texts = extracted
+
+            if isinstance(texts, str):
+                texts = [texts]
+
+            # for i, t in enumerate((texts or [])[:10], start=1):
+            #     preview = t[:50].replace("\n", " ")
+            #     print(f"Chunk {i} preview: {preview}")
+            #     logger.info(f"Chunk {i} preview: {preview}")
+            logger.info(f"Embeddings generated")
+            print("Embedding Generated" , len(embedding))
+            print("Texts length",len(texts))
+            return {"text_embedding": embedding, "text_chunks": texts}
+        except Exception as e:
+            logger.error(f"Error generating text embedding: {e}")
+            return {}
+    def store_text_faiss(self, state: IngestionState) -> IngestionState:
+        """Store text embedding in FAISS"""
+        logger.info("Storing text embedding")
+        try:
+            chunks = state.get("text_chunks") or state.get("texts", [])
+            print(len(chunks))
+            print(len(state["text_embedding"]))
+            self.store_manager.store_text(
+                embedding=state["text_embedding"],
+                chunks = chunks,
+                file_path = state["current_file"]
+            )
+            return {}
+        except Exception as e:
+            logger.error(f"Error storing text: {e}")
+            return {}
+    def extract_images_from_text(self, state: IngestionState) -> IngestionState:
+        """Extract embedded images from documents"""
+        logger.info("Extracting embedded images")
+        
+        try:
+            images = self.text_processor.extract_embedded_images(
+                state["current_file"]
+            )
+            return {"extracted_images_from_docs": images}
+        except Exception as e:
+            logger.error(f"Error extracting images: {e}")
+            return {"extracted_images_from_docs": []}
+    
+    def route_after_text_extraction(self, state: IngestionState) -> Literal["process_images", "next_file"]:
+        """Route based on whether embedded images were found"""
+        images = state.get("extracted_images_from_docs", [])
+        if images:
+            return "process_images"
+        return "next_file"
     def file_type_splitter(self, state: IngestionState) -> IngestionState:
         """Split processing based on file type"""
         return {}  # Just a routing node
@@ -246,7 +332,165 @@ class IngestionPipeline:
         if state.get("current_file"):
             return "process_file"
         return "end"
-   
+    def process_text(self, state: IngestionState) -> IngestionState:
+        """Extract text from document"""
+        logger.info(f"Processing text file: {state['current_file']}")
+        
+        try:
+            result = self.text_processor.process(state["current_file"])
+            # print("Process_text",result)            
+            if result.success:
+                # Also try OCR if it's an image-based document
+                ocr_text = self.ocr_processor.extract_from_file(state["current_file"])
+                
+                combined_text = result.data
+                if ocr_text:
+                    combined_text = f"{result.data}\n\nOCR Extracted:\n{ocr_text}"
+                
+                return {
+                    "extracted_text": combined_text,
+                    "ocr_text": ocr_text
+                }
+            else:
+                logger.error(f"Failed to process text: {result.error}")
+                errors = state.get("errors", [])
+                errors.append(f"{state['current_file']}: {result.error}")
+                return {"errors": errors}
+                
+        except Exception as e:
+            logger.error(f"Error processing text: {e}")
+            errors = state.get("errors", [])
+            errors.append(f"{state['current_file']}: {str(e)}")
+            return {"errors": errors}
+    def prepare_images(self, state: IngestionState) -> IngestionState:
+        """Prepare images for processing"""
+        logger.info("Preparing images")
+        
+        # Get images from either direct image file or extracted from docs
+        if state.get("current_file_type") == "image":
+            images = [state["current_file"]]
+        else:
+            images = state.get("extracted_images_from_docs", [])
+        
+        if not images:
+            return {}
+        
+        # Process each image
+        processed = []
+        for img_path in images:
+            try:
+                result = self.image_processor.process(img_path)
+                if result.success:
+                    processed.append(result.data)
+            except Exception as e:
+                logger.error(f"Error processing image {img_path}: {e}")
+        # print({"processed_image": processed})
+        return {"processed_image": processed}
+    def increment_progress(self, state: IngestionState) -> IngestionState:
+        """Update progress counter"""
+        processed = state.get("files_processed", 0) + 1
+        total = state.get("total_files", 0)
+        
+        logger.info(f"Progress: {processed}/{total} files processed")
+        
+        return {"files_processed": processed}
+    
+    def generate_image_embeddings(self, state: IngestionState) -> IngestionState:
+        """Generate embeddings for images"""
+        logger.info("Generating image embeddings")
+        
+        try:
+            images = state.get("processed_image", [])
+            if not images:
+                return {}
+            
+            embeddings = self.embedding_manager.generate_image_embeddings(images)
+            print(embeddings[0][:5])
+            return {"image_embedding": embeddings}
+        except Exception as e:
+            logger.error(f"Error generating image embeddings: {e}")
+            return {}
+    
+    def store_images_faiss(self, state: IngestionState) -> IngestionState:
+        """Store image embeddings"""
+        logger.info("Storing image embeddings")
+        
+        try:
+            embeddings = state.get("image_embedding", [])
+            if not embeddings:
+                return {}
+            
+            # Create metadata for each image
+            metadata = [{
+                "file_path": state["current_file"],
+                "type": "image",
+                "index": i
+            } for i in range(len(embeddings))]
+            
+            self.store_manager.store_images(embeddings, metadata)
+            return {}
+        except Exception as e:
+            logger.error(f"Error storing images: {e}")
+            return {}
+    
+    
+    def generate_image_context_llm(self, state: IngestionState) -> IngestionState:
+        """Generate textual context from images using Vision LLM"""
+        logger.info("Generating image context with Vision LLM")
+        
+        try:
+            images = state.get("processed_image", [])
+            if not images:
+                return {}
+            # Rich, search-friendly description prompt (objects, colors, text, setting, actions).
+            query = (
+                "Describe each image in vivid, search-friendly detail so it is easy to retrieve by query. "
+                "Mention key objects, their colors, size, material, and position; any readable text; "
+                "the scene/setting; actions/events; camera/view (e.g., close-up, top-down); lighting; "
+                "and counts of notable objects. Example: 'A bright red rubber ball on green grass, single ball, "
+                "daylight, close-up shot'."
+            )
+
+            context = self.vision_llm.generate_context(images, query=query)
+            print(context)
+
+            # Embed the generated context; capture chunks and embeddings separately.
+            context_result = self.embedding_manager.generate_text_embedding(context)
+
+            if isinstance(context_result, dict):
+                context_embedding = context_result.get("embeddings")
+                context_chunks = context_result.get("texts") or [context]
+            else:
+                context_embedding = context_result
+                context_chunks = [context]
+
+            return {
+                "image_context": context,
+                "image_context_chunks": context_chunks,
+                "image_context_embedding": context_embedding,
+            }
+        except Exception as e:
+            logger.error(f"Error generating image context: {e}")
+            return {}
+        
+    def store_context_text_faiss(self, state: IngestionState) -> IngestionState:
+        """Store image context as text"""
+        logger.info("Storing image context")
+        
+        try:
+            embeddings = state.get("image_context_embedding")
+            chunks = state.get("image_context_chunks") or []
+            if embeddings:
+                self.store_manager.store_text(
+                    embedding=embeddings,
+                    chunks=chunks,
+                    file_path=state.get("current_file", "unknown"),
+                )
+            return {}
+        except Exception as e:
+            logger.error(f"Error storing context: {e}")
+            return {}
+    
     
 
 
