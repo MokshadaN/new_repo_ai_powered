@@ -201,22 +201,22 @@ class VectorStoreManager:
     #         )
     #     return results
 
-    # # Object operations
-    # def store_objects(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
-    #     for meta in metadata:
-    #         logger.info("Storing object embeddings for: %s", meta.get("image", "unknown"))
+    # Object operations
+    def store_objects(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
+        for meta in metadata:
+            logger.info("Storing object embeddings for: %s", meta.get("image", "unknown"))
 
-    #     processed = [
-    #         self.ensure_correct_dimension(e, settings.object_embedding_dimension) for e in embeddings
-    #     ]
-    #     return self.faiss_objects.store(processed, metadata)
+        processed = [
+            self.ensure_correct_dimension(e, settings.object_embedding_dimension) for e in embeddings
+        ]
+        return self.faiss_objects.store(processed, metadata)
 
-    # def search_objects(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
-    #     query_embedding = self.ensure_correct_dimension(
-    #         query_embedding, settings.object_embedding_dimension
-    #     )
-    #     top_k = top_k or settings.top_k_results
-    #     return self.faiss_objects.search(query_embedding, top_k)
+    def search_objects(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
+        query_embedding = self.ensure_correct_dimension(
+            query_embedding, settings.object_embedding_dimension
+        )
+        top_k = top_k or settings.top_k_results
+        return self.faiss_objects.search(query_embedding, top_k)
 
     # # Stats & helpers
     # def get_statistics(self) -> Dict:

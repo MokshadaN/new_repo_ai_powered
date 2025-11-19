@@ -160,9 +160,7 @@ class FaceDetector:
                 all_faces.extend(faces)
 
         logger.info(
-            "Detected %d faces across %d images",
-            len(all_faces),
-            len(images),
+            f"Detected {len(all_faces)} faces across {len(images)} images",
         )
         return all_faces
     
@@ -197,16 +195,16 @@ class FaceDetector:
 
                 bbox = face.bbox.astype(int).tolist() if hasattr(face, "bbox") else []
                 landmarks = face.kps.tolist() if hasattr(face, "kps") else []
-
+                embedding = face.normed_embedding.tolist() if hasattr(face, "normed_embedding") else None
                 detections.append(
                     {
                         "image": image_path,
                         "bbox": bbox,
                         "confidence": confidence,
                         "landmarks": landmarks,
+                        "embedding":embedding
                     }
                 )
-                print("Detection:",detections)
                 print("Faces detected: ",len(detections))
             return detections
         except Exception as e:

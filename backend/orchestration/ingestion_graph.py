@@ -7,7 +7,7 @@ from backend.processors.image_processors import ImageProcessor
 from backend.processors.ocr_processor import OCRProcessor
 from backend.embeddings.embedding_manager import EmbeddingManager
 from backend.detection.face_detector import FaceDetector
-# from backend.detection.object_detector import ObjectDetector
+from backend.detection.object_detector import ObjectDetector
 from backend.llm.local_llm import VisionLLM
 from backend.vector_store.store_manager import VectorStoreManager
 from backend.utils.logger import app_logger as logger
@@ -75,7 +75,7 @@ class IngestionPipeline:
         # print("I_6")
         self.face_detector = FaceDetector()
         # print("I_7")
-        # self.object_detector = ObjectDetector()
+        self.object_detector = ObjectDetector()
         # print("I_8")
         self.vision_llm = VisionLLM()
         # print("I_9")
@@ -111,8 +111,8 @@ class IngestionPipeline:
         workflow.add_node("store_context_text_faiss", self.store_context_text_faiss)
         workflow.add_node("detect_faces", self.detect_faces)
         workflow.add_node("store_faces_faiss", self.store_faces_faiss)
-        # workflow.add_node("detect_objects", self.detect_objects)
-        # workflow.add_node("store_objects_faiss", self.store_objects_faiss)
+        workflow.add_node("detect_objects", self.detect_objects)
+        workflow.add_node("store_objects_faiss", self.store_objects_faiss)
         
         # # Progress tracking
         workflow.add_node("increment_progress", self.increment_progress)
@@ -179,11 +179,12 @@ class IngestionPipeline:
         workflow.add_edge("generate_image_context_llm", "store_context_text_faiss")
         #workflow.add_edge("store_context_text_faiss", END)
         workflow.add_edge("store_context_text_faiss", "detect_faces")
-        workflow.add_edge("detect_faces",END)
-        #workflow.add_edge("detect_faces", "store_faces_faiss")
-        # workflow.add_edge("store_faces_faiss", "detect_objects")
-        # workflow.add_edge("detect_objects", "store_objects_faiss")
-        # workflow.add_edge("store_objects_faiss", "increment_progress")
+        #workflow.add_edge("detect_faces",END)
+        workflow.add_edge("detect_faces", "store_faces_faiss")
+        workflow.add_edge("store_faces_faiss", "detect_objects")
+        # workflow.add_edge("detect_objects", "increment_progress")
+        workflow.add_edge("detect_objects", "store_objects_faiss")
+        workflow.add_edge("store_objects_faiss", "increment_progress")
         
         # # Loop back
         workflow.add_edge("increment_progress", "get_next_file")
@@ -493,19 +494,85 @@ class IngestionPipeline:
             logger.error(f"Error storing context: {e}")
             return {}
     
-    def embed_and_store_faces(image_paths):
-        detector = FaceDetector()
-        vector_store = VectorStoreManager()
+    # def embed_and_store_faces(image_paths):
+    #     detector = FaceDetector()
+    #     vector_store = VectorStoreManager()
 
-        detections = detector.detect(image_paths)
+    #     detections = detector.detect(image_paths)
+    #     if not detections:
+    #         print("No faces detected.")
+    #         return False
+
+    #     stored = vector_store.store_faces(detections)
+    #     print(f"Stored {len(detections)} face embeddings: {stored}")
+    #     return stored
+    def detect_faces(self, state: IngestionState) -> IngestionState:
+        """Run InsightFace on the prepared images and stash detections."""
+        logger.info("Detecting faces")
+        processed_images = state.get("processed_image") or []
+
+        image_paths: List[str] = []
+        for item in processed_images:
+            if isinstance(item, dict) and "path" in item:
+                image_paths.append(item["path"])
+            elif isinstance(item, str):
+                image_paths.append(item)
+
+        if not image_paths:
+            logger.warning("Face detection skipped: no image paths available")
+            return {"detected_faces": []}
+
+        detections = self.face_detector.detect(image_paths)
+        logger.info(f"Detected {len(detections)} faces across {len(image_paths)} images")
+        return {"detected_faces": detections}
+
+    def store_faces_faiss(self, state: IngestionState) -> IngestionState:
+        """Persist detected face embeddings into the FAISS face store."""
+        detections = state.get("detected_faces") or []
         if not detections:
-            print("No faces detected.")
-            return False
+            logger.warning("No face detections to store")
+            return {}
 
-        stored = vector_store.store_faces(detections)
-        print(f"Stored {len(detections)} face embeddings: {stored}")
-        return stored
+        stored = self.store_manager.store_faces(detections)
+        logger.info("Stored %d faces in FAISS (success=%s)", len(detections), stored)
+        return {}
 
+    def detect_objects(self, state: IngestionState) -> IngestionState:
+        """Detect objects in images"""
+        logger.info("Detecting objects")
+        
+        try:
+            images = state.get("processed_image", [])
+            if not images:
+                return {}
+            
+            objects = self.object_detector.detect(images)
+            
+            if objects:
+                object_embeddings = self.embedding_manager.generate_object_embeddings(objects)
+                return {
+                    "detected_objects": objects,
+                    "object_embeddings": object_embeddings
+                }
+            return {}
+        except Exception as e:
+            logger.error(f"Error detecting objects: {e}")
+            return {}
+    
+    def store_objects_faiss(self, state: IngestionState) -> IngestionState:
+        """Store object embeddings"""
+        logger.info("Storing object embeddings")
+        
+        try:
+            objects = state.get("detected_objects", [])
+            embeddings = state.get("object_embeddings", [])
+            
+            if objects and embeddings:
+                self.store_manager.store_objects(embeddings, objects)
+            return {}
+        except Exception as e:
+            logger.error(f"Error storing objects: {e}")
+            return {}
     def run(self, folder_path: str) -> Dict:
         """Execute the ingestion pipeline"""
         logger.info(f"Starting ingestion pipeline for: {folder_path}")
