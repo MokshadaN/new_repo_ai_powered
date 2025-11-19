@@ -8,6 +8,8 @@ import numpy as np
 from backend.vector_store.faiss_store import FAISSStore
 from backend.config.settings import settings
 from backend.utils.logger import app_logger as logger
+from backend.embeddings.face_embedder import FaceEmbedder
+
 
 
 class VectorStoreManager:
@@ -20,7 +22,7 @@ class VectorStoreManager:
         self.faiss_images = FAISSStore("image_faiss", settings.image_embedding_dimension)  # 768
         self.faiss_faces = FAISSStore("face_faiss", settings.face_embedding_dimension)  # 512
         self.faiss_objects = FAISSStore("object_faiss", settings.object_embedding_dimension)  # 768
-
+        self.face_embedder=FaceEmbedder()
         logger.info(
             "Vector stores ready (Text: %dD, Image: %dD, Face: %dD, Object: %dD)",
             settings.embedding_dimension,
@@ -142,6 +144,44 @@ class VectorStoreManager:
     #         self.ensure_correct_dimension(e, settings.face_embedding_dimension) for e in embeddings
     #     ]
     #     return self.faiss_faces.store(processed, metadata)
+    def store_faces(self, detections: List[Dict]) -> bool:
+        if not detections:
+            logger.warning("No face detections supplied for FAISS storage")
+            return False
+
+        embeddings: List[List[float]] = []
+        metadatas: List[Dict] = []
+
+        for detection in detections:
+            logger.info("Storing face embedding for: %s", detection.get("image", "unknown"))
+
+            embedding = detection.get("embedding")
+            if embedding is None:
+                embedding = self.face_embedder.generate_embedding(detection)
+
+            if not embedding:
+                logger.warning("Skipping detection with no embedding: %s", detection.get("image"))
+                continue
+
+            fixed = self.ensure_correct_dimension(
+                embedding,
+                settings.face_embedding_dimension,
+            )
+            embeddings.append(fixed)
+            metadatas.append(
+                {
+                    "image": detection.get("image"),
+                    "bbox": detection.get("bbox"),
+                    "confidence": detection.get("confidence"),
+                    "landmarks": detection.get("landmarks"),
+                }
+            )
+
+        if not embeddings:
+            logger.warning("No valid face embeddings available to store")
+            return False
+
+        return self.faiss_faces.store(embeddings, metadatas)
 
     # def search_faces(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
     #     query_embedding = self.ensure_correct_dimension(

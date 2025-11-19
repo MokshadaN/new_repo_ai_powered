@@ -6,7 +6,7 @@ from backend.processors.text_processor import TextProcessor
 from backend.processors.image_processors import ImageProcessor
 from backend.processors.ocr_processor import OCRProcessor
 from backend.embeddings.embedding_manager import EmbeddingManager
-# from backend.detection.face_detector import FaceDetector
+from backend.detection.face_detector import FaceDetector
 # from backend.detection.object_detector import ObjectDetector
 from backend.llm.local_llm import VisionLLM
 from backend.vector_store.store_manager import VectorStoreManager
@@ -73,7 +73,7 @@ class IngestionPipeline:
         # print("I_5")
         self.embedding_manager = EmbeddingManager()
         # print("I_6")
-        # self.face_detector = FaceDetector()
+        self.face_detector = FaceDetector()
         # print("I_7")
         # self.object_detector = ObjectDetector()
         # print("I_8")
@@ -109,8 +109,8 @@ class IngestionPipeline:
         workflow.add_node("store_images_faiss", self.store_images_faiss)
         workflow.add_node("generate_image_context_llm", self.generate_image_context_llm)
         workflow.add_node("store_context_text_faiss", self.store_context_text_faiss)
-        # workflow.add_node("detect_faces", self.detect_faces)
-        # workflow.add_node("store_faces_faiss", self.store_faces_faiss)
+        workflow.add_node("detect_faces", self.detect_faces)
+        workflow.add_node("store_faces_faiss", self.store_faces_faiss)
         # workflow.add_node("detect_objects", self.detect_objects)
         # workflow.add_node("store_objects_faiss", self.store_objects_faiss)
         
@@ -177,9 +177,10 @@ class IngestionPipeline:
         # workflow.add_edge("store_images_faiss", END)
         # workflow.add_edge("generate_image_context_llm", END)
         workflow.add_edge("generate_image_context_llm", "store_context_text_faiss")
-        workflow.add_edge("store_context_text_faiss", END)
-        # workflow.add_edge("store_context_text_faiss", "detect_faces")
-        # workflow.add_edge("detect_faces", "store_faces_faiss")
+        #workflow.add_edge("store_context_text_faiss", END)
+        workflow.add_edge("store_context_text_faiss", "detect_faces")
+        workflow.add_edge("detect_faces",END)
+        #workflow.add_edge("detect_faces", "store_faces_faiss")
         # workflow.add_edge("store_faces_faiss", "detect_objects")
         # workflow.add_edge("detect_objects", "store_objects_faiss")
         # workflow.add_edge("store_objects_faiss", "increment_progress")
@@ -362,6 +363,7 @@ class IngestionPipeline:
             errors = state.get("errors", [])
             errors.append(f"{state['current_file']}: {str(e)}")
             return {"errors": errors}
+        
     def prepare_images(self, state: IngestionState) -> IngestionState:
         """Prepare images for processing"""
         logger.info("Preparing images")
@@ -491,8 +493,18 @@ class IngestionPipeline:
             logger.error(f"Error storing context: {e}")
             return {}
     
-    
+    def embed_and_store_faces(image_paths):
+        detector = FaceDetector()
+        vector_store = VectorStoreManager()
 
+        detections = detector.detect(image_paths)
+        if not detections:
+            print("No faces detected.")
+            return False
+
+        stored = vector_store.store_faces(detections)
+        print(f"Stored {len(detections)} face embeddings: {stored}")
+        return stored
 
     def run(self, folder_path: str) -> Dict:
         """Execute the ingestion pipeline"""
