@@ -243,3 +243,16 @@ class VectorStoreManager:
         return contains_path(self.faiss_text.metadata_store) or contains_path(
             self.faiss_images.metadata_store
         )
+
+    def search_text(self, query_embedding: list, top_k: int | None = None) -> list:
+        """
+        Search the text FAISS index. Accepts a single vector or a list (first vector used).
+        Returns a list of metadata dicts with similarity scores.
+        """
+        # Ensure correct dimension and single-vector input
+        query_embedding = self.ensure_correct_dimension(query_embedding, settings.embedding_dimension)
+        if isinstance(query_embedding, list) and isinstance(query_embedding[0], list):
+            query_embedding = query_embedding[0]
+
+        top_k = top_k or settings.top_k_results
+        return self.faiss_text.search(query_embedding, top_k)

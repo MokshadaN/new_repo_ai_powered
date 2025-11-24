@@ -20,3 +20,5 @@ easyocr
 sentencepiece
 ollama
 PyMuPDF
+ultralytics
+onxruntime

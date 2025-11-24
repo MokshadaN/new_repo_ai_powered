@@ -108,3 +108,35 @@ class TextEmbedder:
         #     raise ValueError("Unexpected embeddings response from Ollama")
 
         # return embeddings
+    def generate_query_embedding(self, text: str) -> dict:
+        """
+        Generate embedding for a short query string. Returns a dict with
+        keys `embeddings` (list of 1 vector) and `texts` (list of 1 string).
+        Ensures the returned vector has the configured dimension (pad/truncate).
+        """
+        if not isinstance(text, str):
+            raise ValueError("generate_query_embedding expects a string")
+
+        try:
+            emb = self._embed_with_ollama(text)
+            # Ollama may return a single vector (list of floats) or nested list
+            if isinstance(emb, list) and emb and not isinstance(emb[0], list):
+                vec = list(map(float, emb))
+            elif isinstance(emb, list) and emb and isinstance(emb[0], list):
+                vec = list(map(float, emb[0]))
+            else:
+                vec = [0.0] * getattr(self.model_config, "dimension", 1024)
+
+            # Ensure fixed dimension
+            target_dim = getattr(self.model_config, "dimension", 1024)
+            if len(vec) < target_dim:
+                vec = vec + [0.0] * (target_dim - len(vec))
+            elif len(vec) > target_dim:
+                vec = vec[:target_dim]
+
+            return {"embeddings": [vec], "texts": [text]}
+
+        except Exception as e:
+            logger.error(f"Error generating query embedding: {e}")
+            target_dim = getattr(self.model_config, "dimension", 1024)
+            return {"embeddings": [[0.0] * target_dim], "texts": [text]}

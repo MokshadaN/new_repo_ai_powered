@@ -25,10 +25,18 @@ class EmbeddingManager:
     def generate_text_embedding(self, text: str) -> List[float]:
         """Generate text embedding"""
         return self.text_embedder.generate_embedding(text)
+
+    def generate_query_embedding(self, text: str) -> dict:
+        """Generate an embedding specifically for short query text.
+
+        Returns a dict compatible with existing pipeline handling:
+        {"embeddings": [...], "texts": [...]}
+        """
+        return self.text_embedder.generate_query_embedding(text)
     
-    def generate_text_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        """Generate batch of text embeddings"""
-        return self.text_embedder.generate_batch_embeddings(texts)
+    # def generate_text_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+    #     """Generate batch of text embeddings"""
+    #     return self.text_embedder.generate_batch_embeddings(texts)
     
     def generate_image_embedding(self, image_data: Any) -> List[float]:
         """Generate image embedding"""

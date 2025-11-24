@@ -249,6 +249,7 @@ class FAISSStore:
                     res['distance'] = float(1 - distance)
                     results.append(res)
             print("Faiss result")
+            logger.info(f"FAISS search returned {len(results)} results (requested {top_k})")
             return results
 
         except Exception as e:
