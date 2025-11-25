@@ -88,7 +88,7 @@ if st.button("🔍 Search", type="primary"):
                 # Show detailed results
                 st.markdown("### Detailed Results")
                 
-                reranked_results = result.get('reranked_results', [])
+                reranked_results = result.get('results_from_text_faiss', [])
                 
                 if not reranked_results:
                     st.warning("No results found")
@@ -100,11 +100,11 @@ if st.button("🔍 Search", type="primary"):
                             with col1:
                                 st.markdown(f"**{idx}. {res.get('file_path', 'Unknown')}**")
                                 
-                                # Show preview
-                                if 'content_preview' in res:
-                                    st.text(res['content_preview'] + "...")
-                                elif 'context' in res:
-                                    st.text(res['context'] + "...")
+                                # Show chunk text (associated with similarity score)
+                                chunk_text = res.get('chunk_content', res.get('content_preview', res.get('context', 'N/A')))
+                                if chunk_text and chunk_text != 'N/A':
+                                    st.markdown("**Relevant Chunk:**")
+                                    st.markdown(chunk_text)
                             
                             with col2:
                                 similarity = res.get('similarity', 0)
