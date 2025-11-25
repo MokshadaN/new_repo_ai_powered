@@ -85,6 +85,7 @@ class VectorStoreManager:
                 "chunk_id": idx,
                 "total_chunks": total_chunks,
                 "chunk_content": text,
+                "content_preview": text,
                 "embedding_dim": len(emb),
             })
         print("Metadata of faiss text store")
@@ -211,12 +212,12 @@ class VectorStoreManager:
         ]
         return self.faiss_objects.store(processed, metadata)
 
-    def search_objects(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
-        query_embedding = self.ensure_correct_dimension(
-            query_embedding, settings.object_embedding_dimension
-        )
-        top_k = top_k or settings.top_k_results
-        return self.faiss_objects.search(query_embedding, top_k)
+    # def search_objects(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
+    #     query_embedding = self.ensure_correct_dimension(
+    #         query_embedding, settings.object_embedding_dimension
+    #     )
+    #     top_k = top_k or settings.top_k_results
+    #     return self.faiss_objects.search(query_embedding, top_k)
 
     # # Stats & helpers
     # def get_statistics(self) -> Dict:

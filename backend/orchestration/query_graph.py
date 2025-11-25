@@ -386,7 +386,14 @@ class QueryPipeline:
         if text_results:
             context_parts.append("=== Text Documents ===")
             for i, result in enumerate(text_results[:5], 1):
-                context_parts.append(f"{i}. {result.get('content_preview', 'N/A')}")
+                preview = (
+                    result.get("content_preview")
+                    or result.get("chunk_content")
+                    or result.get("content")
+                    or "N/A"
+                )
+                file_path = result.get("file_path", "unknown file")
+                context_parts.append(f"{i}. {file_path}: {preview}")
         
         if image_text_results:
             context_parts.append("\n=== Images (via text search) ===")
