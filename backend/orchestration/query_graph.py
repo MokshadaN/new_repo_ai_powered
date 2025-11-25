@@ -48,7 +48,7 @@ class QueryPipeline:
         
     #     # Search nodes
         workflow.add_node("search_text_faiss", self.search_text_faiss)
-    #     workflow.add_node("search_image_faiss_from_text", self.search_image_faiss_from_text)
+        workflow.add_node("search_image_faiss_from_text", self.search_image_faiss_from_text)
     #     workflow.add_node("search_image_faiss_from_image", self.search_image_faiss_from_image)
     #     workflow.add_node("search_face_faiss", self.search_face_faiss)
     #     workflow.add_node("search_object_faiss", self.search_object_faiss)
@@ -79,7 +79,7 @@ class QueryPipeline:
         
     #     # Text-based searches (parallel)
         workflow.add_edge("generate_text_embedding", "search_text_faiss")
-    #     workflow.add_edge("generate_text_embedding", "search_image_faiss_from_text")
+        workflow.add_edge("generate_text_embedding", "search_image_faiss_from_text")
         
     #     # Image-based searches (parallel)
     #     workflow.add_edge("generate_image_embedding", "search_image_faiss_from_image")
@@ -105,7 +105,15 @@ class QueryPipeline:
             }
         )
         
-    #     workflow.add_conditional_edges(
+        workflow.add_conditional_edges(
+            "search_image_faiss_from_text",
+            self.route_to_aggregator,
+            {
+                "aggregate_text_only": "aggregate_text_only",
+                # "aggregate_multimodal": "aggregate_multimodal"
+            }
+        )
+          #     workflow.add_conditional_edges(
     #         "search_image_faiss_from_text",
     #         self.route_to_aggregator,
     #         {
@@ -319,18 +327,18 @@ class QueryPipeline:
             logger.error(f"Error searching text FAISS: {e}")
             return {"results_from_text_faiss": []}
     
-    # def search_image_faiss_from_text(self, state: QueryState) -> QueryState:
-    #     """Search image FAISS with text embedding"""
-    #     logger.info("Searching image FAISS (text query)")
+    def search_image_faiss_from_text(self, state: QueryState) -> QueryState:
+        """Search image FAISS with text embedding"""
+        logger.info("Searching image FAISS (text query)")
         
-    #     try:
-    #         results = self.store_manager.search_images_by_text(
-    #             state["text_query_embedding"]
-    #         )
-    #         return {"results_from_image_faiss_text": results}
-    #     except Exception as e:
-    #         logger.error(f"Error searching images: {e}")
-    #         return {"results_from_image_faiss_text": []}
+        try:
+            results = self.store_manager.search_images_by_text(
+                state["text_query_embedding"]
+            )
+            return {"results_from_image_faiss_text": results}
+        except Exception as e:
+            logger.error(f"Error searching images: {e}")
+            return {"results_from_image_faiss_text": []}
     
     # def search_image_faiss_from_image(self, state: QueryState) -> QueryState:
     #     """Search image FAISS with image embedding"""
@@ -400,7 +408,6 @@ class QueryPipeline:
             reverse=True,
         )
         top_files = sorted_files[: settings.top_k_results] if settings.top_k_results else sorted_files[:5]
-        grouped_top = {fp: data for fp, data in top_files}
 
         # Build context string with per-file chunk counts and combined chunks
         context_parts = []
@@ -418,7 +425,6 @@ class QueryPipeline:
         return {
             "aggregated_context": context,
             "reranked_results": reranked,
-            "grouped_results": grouped_top,
         }
     
     # def aggregate_multimodal(self, state: QueryState) -> QueryState:

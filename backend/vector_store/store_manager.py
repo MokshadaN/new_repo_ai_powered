@@ -88,7 +88,7 @@ class VectorStoreManager:
                 "content_preview": text,
                 "embedding_dim": len(emb),
             })
-        print("Metadata of faiss text store")
+        print("Metadata of faiss text store of length", len(chunk_texts))
         print(metadatas[0])
         success = True
 
@@ -122,19 +122,19 @@ class VectorStoreManager:
     #     top_k = top_k or settings.top_k_results
     #     return self.faiss_images.search(query_embedding, top_k)
 
-    # def search_images_by_text(
-    #     self, text_embedding: List[float], top_k: int | None = None
-    # ) -> List[Dict]:
-    #     """
-    #     Cross-modal search (text -> image).
-    #     If a 1024D text embedding is provided, project to 768D via truncation.
-    #     """
-    #     text_embedding_array = np.array(text_embedding).flatten()
-    #     if len(text_embedding_array) == settings.embedding_dimension:
-    #         projected = text_embedding_array[: settings.image_embedding_dimension]
-    #         logger.info("Projected text embedding from 1024D to 768D for cross-modal search")
-    #         return self.search_images(projected.tolist(), top_k)
-    #     return self.search_images(text_embedding, top_k)
+    def search_images_by_text(
+        self, text_embedding: List[float], top_k: int | None = None
+    ) -> List[Dict]:
+        """
+        Cross-modal search (text -> image).
+        If a 1024D text embedding is provided, project to 768D via truncation.
+        """
+        text_embedding_array = np.array(text_embedding).flatten()
+        if len(text_embedding_array) == settings.embedding_dimension:
+            projected = text_embedding_array[: settings.image_embedding_dimension]
+            logger.info("Projected text embedding from 1024D to 768D for cross-modal search")
+            return self.search_images(projected.tolist(), top_k)
+        return self.search_images(text_embedding, top_k)
 
     # # Face operations
     # def store_faces(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:

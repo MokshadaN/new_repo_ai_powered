@@ -50,7 +50,13 @@ def _group_results_by_file(results):
     grouped = {}
     for res in results or []:
         file_path = res.get('file_path', 'Unknown')
-        chunk_text = res.get('chunk_content') or res.get('content_preview') or res.get('context')
+        chunk_text = (
+            res.get('chunk_content')
+            or res.get('content_preview')
+            or res.get('content')
+            or res.get('context')
+            or res.get('text')
+        )
         if not chunk_text:
             continue
         sim = res.get('similarity', 0)
@@ -58,6 +64,7 @@ def _group_results_by_file(results):
             'text': chunk_text,
             'similarity': sim,
             'type': res.get('type', 'unknown'),
+            'chunk_id': res.get('chunk_id'),
         })
 
     # Sort chunks per file by similarity desc
@@ -110,34 +117,18 @@ if st.button("🔍 Search", type="primary"):
                 st.markdown("### Detailed Results")
                 
                 reranked_results = result.get('results_from_text_faiss', [])
-                grouped_results = result.get('grouped_results') or _group_results_by_file(reranked_results)
+                grouped_results = _group_results_by_file(reranked_results)
 
                 if not grouped_results:
                     st.warning("No results found")
                 else:
-                    for idx, (file_path, file_data_or_chunks) in enumerate(grouped_results.items(), 1):
-                        # Handle both backend-provided grouped dict and local fallback list
-                        if isinstance(file_data_or_chunks, dict) and 'contexts' in file_data_or_chunks:
-                            contexts = file_data_or_chunks.get('contexts', [])
-                            confidence = file_data_or_chunks.get('confidence', 0)
-                            chunks = [
-                                {
-                                    'text': ctx.get('content'),
-                                    'similarity': ctx.get('similarity', 0),
-                                    'type': ctx.get('source_type', 'unknown'),
-                                }
-                                for ctx in contexts
-                                if ctx.get('content')
-                            ]
-                        else:
-                            confidence = None
-                            chunks = file_data_or_chunks
-
+                    for idx, (file_path, chunks) in enumerate(grouped_results.items(), 1):
                         with st.container():
-                            conf_text = f" — confidence: {confidence:.2%}" if confidence is not None else ""
-                            st.markdown(f"**{idx}. {file_path}**{conf_text}")
+                            st.markdown(f"**{idx}. {file_path}**")
                             for chunk in chunks:
-                                st.markdown("**Relevant Chunk:**")
+                                chunk_id = chunk.get('chunk_id')
+                                label = f"Chunk {chunk_id}" if chunk_id is not None else "Relevant Chunk"
+                                st.markdown(f"**{label}:**")
                                 st.markdown(chunk.get('text', 'N/A'))
                                 st.metric("Similarity", f"{chunk.get('similarity', 0):.2%}")
                                 st.badge(chunk.get('type', 'unknown'))

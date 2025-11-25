@@ -483,10 +483,37 @@ class IngestionPipeline:
         try:
             embeddings = state.get("image_context_embedding")
             chunks = state.get("image_context_chunks") or []
+
             if embeddings:
+                # Ensure chunk texts align with the number of embeddings and avoid placeholder labels
+                emb_count = len(embeddings) if isinstance(embeddings, list) else 1
+                if not chunks:
+                    # Fallback to the full generated context if chunking was not provided
+                    fallback_text = state.get("image_context") or "Image context"
+                    chunk_texts = [fallback_text] * emb_count
+                else:
+                    chunk_texts = list(chunks)
+                    if len(chunk_texts) < emb_count:
+                        chunk_texts.extend([chunk_texts[-1]] * (emb_count - len(chunk_texts)))
+                    elif len(chunk_texts) > emb_count:
+                        chunk_texts = chunk_texts[:emb_count]
+
+                file_path = state.get("current_file", "unknown")
+                previews = [
+                    (c[:120] + ("..." if len(c) > 120 else "")) if isinstance(c, str) else c
+                    for c in chunk_texts
+                ]
+                logger.info(
+                    "Storing image context: file=%s embeddings=%d chunks=%d",
+                    file_path,
+                    emb_count,
+                    len(chunk_texts),
+                )
+                print("Image context metadata preview:", {"file_path": file_path, "chunks": previews})
+
                 self.store_manager.store_text(
                     embedding=embeddings,
-                    chunks=chunks,
+                    chunks=chunk_texts,
                     file_path=state.get("current_file", "unknown"),
                 )
             return {}
