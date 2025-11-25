@@ -379,37 +379,46 @@ class QueryPipeline:
         
         text_results = state.get("results_from_text_faiss", [])
         image_text_results = state.get("results_from_image_faiss_text", [])
-        
-        # Combine and format context
-        context_parts = []
-        
-        if text_results:
-            context_parts.append("=== Text Documents ===")
-            for i, result in enumerate(text_results[:5], 1):
-                preview = (
-                    result.get("content_preview")
-                    or result.get("chunk_content")
-                    or result.get("content")
-                    or "N/A"
-                )
-                file_path = result.get("file_path", "unknown file")
-                context_parts.append(f"{i}. {file_path}: {preview}")
-        
-        if image_text_results:
-            context_parts.append("\n=== Images (via text search) ===")
-            for i, result in enumerate(image_text_results[:5], 1):
-                context_parts.append(f"{i}. {result.get('context', 'N/A')}")
-        
-        context = "\n".join(context_parts)
-        # print(context)
-        
-        # Rerank results
+        # Normalize content key so grouping functions can use it
         all_results = text_results + image_text_results
+        for res in all_results:
+            if not res.get("content"):
+                res["content"] = (
+                    res.get("content_preview")
+                    or res.get("chunk_content")
+                    or res.get("context")
+                )
+
+        # Rerank results and then group by file to keep distinct files only
         reranked = self.hybrid_search.rerank(all_results, state["query_text"])
-        
+        grouped = self.hybrid_search.group_by_file_path(reranked)
+
+        # Pick top files by confidence/final score
+        sorted_files = sorted(
+            grouped.items(),
+            key=lambda x: x[1].get("confidence", 0),
+            reverse=True,
+        )
+        top_files = sorted_files[: settings.top_k_results] if settings.top_k_results else sorted_files[:5]
+        grouped_top = {fp: data for fp, data in top_files}
+
+        # Build context string with per-file chunk counts and combined chunks
+        context_parts = []
+        for idx, (file_path, file_data) in enumerate(top_files, 1):
+            chunk_count = len([c for c in file_data.get("contexts", []) if c.get("content")])
+            print(f"LLM context debug -> {file_path}: {chunk_count} chunks")
+            header = f"{idx}. {file_path} (chunks: {chunk_count}, confidence: {file_data.get('confidence', 0):.2%})"
+            context_parts.append(header)
+            # Use the already-combined context built in the hybrid search util
+            if file_data.get("full_context"):
+                context_parts.append(file_data["full_context"])
+
+        context = "\n\n".join(context_parts) if context_parts else "No relevant context found."
+
         return {
             "aggregated_context": context,
-            "reranked_results": reranked
+            "reranked_results": reranked,
+            "grouped_results": grouped_top,
         }
     
     # def aggregate_multimodal(self, state: QueryState) -> QueryState:

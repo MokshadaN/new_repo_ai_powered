@@ -44,6 +44,27 @@ uploaded_image = st.file_uploader(
     type=['png', 'jpg', 'jpeg']
 )
 
+
+def _group_results_by_file(results):
+    """Group search results by file_path and keep chunk text with similarity."""
+    grouped = {}
+    for res in results or []:
+        file_path = res.get('file_path', 'Unknown')
+        chunk_text = res.get('chunk_content') or res.get('content_preview') or res.get('context')
+        if not chunk_text:
+            continue
+        sim = res.get('similarity', 0)
+        grouped.setdefault(file_path, []).append({
+            'text': chunk_text,
+            'similarity': sim,
+            'type': res.get('type', 'unknown'),
+        })
+
+    # Sort chunks per file by similarity desc
+    for file_path in grouped:
+        grouped[file_path] = sorted(grouped[file_path], key=lambda c: c.get('similarity', 0), reverse=True)
+    return grouped
+
 # Search button
 if st.button("🔍 Search", type="primary"):
     if search_query or uploaded_image:
@@ -89,33 +110,42 @@ if st.button("🔍 Search", type="primary"):
                 st.markdown("### Detailed Results")
                 
                 reranked_results = result.get('results_from_text_faiss', [])
-                
-                if not reranked_results:
+                grouped_results = result.get('grouped_results') or _group_results_by_file(reranked_results)
+
+                if not grouped_results:
                     st.warning("No results found")
                 else:
-                    for idx, res in enumerate(reranked_results[:top_k], 1):
+                    for idx, (file_path, file_data_or_chunks) in enumerate(grouped_results.items(), 1):
+                        # Handle both backend-provided grouped dict and local fallback list
+                        if isinstance(file_data_or_chunks, dict) and 'contexts' in file_data_or_chunks:
+                            contexts = file_data_or_chunks.get('contexts', [])
+                            confidence = file_data_or_chunks.get('confidence', 0)
+                            chunks = [
+                                {
+                                    'text': ctx.get('content'),
+                                    'similarity': ctx.get('similarity', 0),
+                                    'type': ctx.get('source_type', 'unknown'),
+                                }
+                                for ctx in contexts
+                                if ctx.get('content')
+                            ]
+                        else:
+                            confidence = None
+                            chunks = file_data_or_chunks
+
                         with st.container():
-                            col1, col2 = st.columns([3, 1])
-                            
-                            with col1:
-                                st.markdown(f"**{idx}. {res.get('file_path', 'Unknown')}**")
-                                
-                                # Show chunk text (associated with similarity score)
-                                chunk_text = res.get('chunk_content', res.get('content_preview', res.get('context', 'N/A')))
-                                if chunk_text and chunk_text != 'N/A':
-                                    st.markdown("**Relevant Chunk:**")
-                                    st.markdown(chunk_text)
-                            
-                            with col2:
-                                similarity = res.get('similarity', 0)
-                                st.metric("Similarity", f"{similarity:.2%}")
-                                
-                                result_type = res.get('type', 'unknown')
-                                st.badge(result_type)
-                            
+                            conf_text = f" — confidence: {confidence:.2%}" if confidence is not None else ""
+                            st.markdown(f"**{idx}. {file_path}**{conf_text}")
+                            for chunk in chunks:
+                                st.markdown("**Relevant Chunk:**")
+                                st.markdown(chunk.get('text', 'N/A'))
+                                st.metric("Similarity", f"{chunk.get('similarity', 0):.2%}")
+                                st.badge(chunk.get('type', 'unknown'))
+                                st.divider()
+
                             if show_metadata:
                                 with st.expander("Show metadata"):
-                                    st.json(res)
+                                    st.json(chunks)
                             
                             st.markdown("---")
                 
