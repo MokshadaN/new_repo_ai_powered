@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     gpu_memory_fraction: float = 0.8
     
     # Logging
-    enable_logging: bool = True
+    enable_logging: bool = False
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

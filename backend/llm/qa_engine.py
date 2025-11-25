@@ -18,8 +18,11 @@ class QAEngine:
     def answer(self, query: str, context: str) -> str:
         """Generate answer from query and context"""
         try:
+            print("build prompt")
             prompt = self._build_prompt(query, context)
+            print("generating answer")
             response = self.llm.generate(prompt, max_tokens=512)
+            print("generated answer")
             return response
             
         except Exception as e:

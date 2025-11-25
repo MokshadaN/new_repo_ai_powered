@@ -176,7 +176,7 @@ class OllamaLLM:
                 "stream": True
             }
 
-            # print("Ollama Payload:", payload)
+            print("Ollama Payload:", payload)
 
             response = requests.post(self.api_url, json=payload, stream=True)
 

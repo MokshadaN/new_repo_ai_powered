@@ -54,9 +54,9 @@ class QueryPipeline:
     #     workflow.add_node("search_object_faiss", self.search_object_faiss)
         
     #     # Aggregation nodes
-    #     workflow.add_node("aggregate_text_only", self.aggregate_text_only)
+        workflow.add_node("aggregate_text_only", self.aggregate_text_only)
     #     workflow.add_node("aggregate_multimodal", self.aggregate_multimodal)
-    #     workflow.add_node("invoke_llm", self.invoke_llm)
+        workflow.add_node("invoke_llm", self.invoke_llm)
         
     #     # Define edges
         workflow.set_entry_point("detect_query_type")
@@ -96,6 +96,15 @@ class QueryPipeline:
     #         }
     #     )
         
+        workflow.add_conditional_edges(
+            "search_text_faiss",
+            self.route_to_aggregator,
+            {
+                "aggregate_text_only": "aggregate_text_only",
+                # "aggregate_multimodal": "aggregate_multimodal"
+            }
+        )
+        
     #     workflow.add_conditional_edges(
     #         "search_image_faiss_from_text",
     #         self.route_to_aggregator,
@@ -111,9 +120,9 @@ class QueryPipeline:
     #     workflow.add_edge("search_object_faiss", "aggregate_multimodal")
         
     #     # Final steps
-    #     workflow.add_edge("aggregate_text_only", "invoke_llm")
+        workflow.add_edge("aggregate_text_only", "invoke_llm")
     #     workflow.add_edge("aggregate_multimodal", "invoke_llm")
-        #     workflow.add_edge("invoke_llm", END)
+        workflow.add_edge("invoke_llm", END)
 
         # Return the constructed workflow
         return workflow
@@ -364,37 +373,37 @@ class QueryPipeline:
     
     # # Aggregation nodes
     
-    # def aggregate_text_only(self, state: QueryState) -> QueryState:
-    #     """Aggregate text-only search results"""
-    #     logger.info("Aggregating text-only results")
+    def aggregate_text_only(self, state: QueryState) -> QueryState:
+        """Aggregate text-only search results"""
+        logger.info("Aggregating text-only results")
         
-    #     text_results = state.get("results_from_text_faiss", [])
-    #     image_text_results = state.get("results_from_image_faiss_text", [])
+        text_results = state.get("results_from_text_faiss", [])
+        image_text_results = state.get("results_from_image_faiss_text", [])
         
-    #     # Combine and format context
-    #     context_parts = []
+        # Combine and format context
+        context_parts = []
         
-    #     if text_results:
-    #         context_parts.append("=== Text Documents ===")
-    #         for i, result in enumerate(text_results[:5], 1):
-    #             context_parts.append(f"{i}. {result.get('content_preview', 'N/A')}")
+        if text_results:
+            context_parts.append("=== Text Documents ===")
+            for i, result in enumerate(text_results[:5], 1):
+                context_parts.append(f"{i}. {result.get('content_preview', 'N/A')}")
         
-    #     if image_text_results:
-    #         context_parts.append("\n=== Images (via text search) ===")
-    #         for i, result in enumerate(image_text_results[:5], 1):
-    #             context_parts.append(f"{i}. {result.get('context', 'N/A')}")
+        if image_text_results:
+            context_parts.append("\n=== Images (via text search) ===")
+            for i, result in enumerate(image_text_results[:5], 1):
+                context_parts.append(f"{i}. {result.get('context', 'N/A')}")
         
-    #     context = "\n".join(context_parts)
-    #     # print(context)
+        context = "\n".join(context_parts)
+        # print(context)
         
-    #     # Rerank results
-    #     all_results = text_results + image_text_results
-    #     reranked = self.hybrid_search.rerank(all_results, state["query_text"])
+        # Rerank results
+        all_results = text_results + image_text_results
+        reranked = self.hybrid_search.rerank(all_results, state["query_text"])
         
-    #     return {
-    #         "aggregated_context": context,
-    #         "reranked_results": reranked
-    #     }
+        return {
+            "aggregated_context": context,
+            "reranked_results": reranked
+        }
     
     # def aggregate_multimodal(self, state: QueryState) -> QueryState:
     #     """Aggregate all multimodal search results"""
@@ -446,37 +455,42 @@ class QueryPipeline:
     #         "reranked_results": reranked
     #     }
     
-    # def invoke_llm(self, state: QueryState) -> QueryState:
-    #     """Generate final response using LLM"""
-    #     logger.info("Invoking LLM for final response")
+    def invoke_llm(self, state: QueryState) -> QueryState:
+        """Generate final response using LLM"""
+        logger.info("Invoking LLM for final response")
         
-    #     try:
-    #         query = state.get("combined_query") or state["query_text"]
-    #         context = state.get("aggregated_context", "")
+        try:
+            print("Combined query")
+            query = state.get("combined_query") or state["query_text"]
+            print("Aggregated Context")
+            context = state.get("aggregated_context", "")
             
-    #         response = self.qa_engine.answer(query, context)
+            print("QA 1")
+            response = self.qa_engine.answer(query, context)
+            print("QA 2")
             
-    #         # Generate insights
-    #         insights = self.qa_engine.generate_insights(state["reranked_results"])
+            # Generate insights
+            insights = self.qa_engine.generate_insights(state["reranked_results"])
             
-    #         return {
-    #             "final_response": response,
-    #             "insights": insights
-    #         }
-    #     except Exception as e:
-    #         logger.error(f"Error invoking LLM: {e}")
-    #         return {
-    #             "final_response": "I apologize, but I encountered an error generating the response.",
-    #             "insights": {}
-    #         }
+            return {
+                "final_response": response,
+                "insights": insights
+            }
+        except Exception as e:
+            logger.error(f"Error invoking LLM: {e}")
+            return {
+                "final_response": "I apologize, but I encountered an error generating the response.",
+                "insights": {}
+            }
     
     # # Router
     
-    # def route_to_aggregator(self, state: QueryState) -> Literal["aggregate_text_only", "aggregate_multimodal"]:
-    #     """Route to appropriate aggregator"""
-    #     if state["query_type"] == "text_only":
-    #         return "aggregate_text_only"
-    #     return "aggregate_multimodal"
+    def route_to_aggregator(self, state: QueryState) -> Literal["aggregate_text_only"]:
+        """
+        Route to the text-only aggregator.
+        Multimodal path is disabled; always return aggregate_text_only to avoid missing node errors.
+        """
+        return "aggregate_text_only"
     
     def run(self, query_text: str, query_image: bytes = None) -> Dict:
         """Execute the query pipeline"""

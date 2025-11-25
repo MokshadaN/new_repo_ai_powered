@@ -49,8 +49,8 @@ class TextEmbedder:
             print("Input is a long string → chunking it...")
 
             splitter = RecursiveCharacterTextSplitter(
-                chunk_size=500,         # You can tune this
-                chunk_overlap=100,      # Recommended overlap
+                chunk_size=256,         # You can tune this
+                chunk_overlap=50,      # Recommended overlap
                 separators=["\n\n", "\n", " ", ""]
             )
 
