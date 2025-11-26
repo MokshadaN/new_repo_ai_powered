@@ -145,6 +145,7 @@ class VectorStoreManager:
     #         self.ensure_correct_dimension(e, settings.face_embedding_dimension) for e in embeddings
     #     ]
     #     return self.faiss_faces.store(processed, metadata)
+
     def store_faces(self, detections: List[Dict]) -> bool:
         if not detections:
             logger.warning("No face detections supplied for FAISS storage")
@@ -184,23 +185,43 @@ class VectorStoreManager:
 
         return self.faiss_faces.store(embeddings, metadatas)
 
-    # def search_faces(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
-    #     query_embedding = self.ensure_correct_dimension(
-    #         query_embedding, settings.face_embedding_dimension
-    #     )
-    #     if isinstance(query_embedding, list) and isinstance(query_embedding[0], list):
-    #         query_embedding = query_embedding[0]
+    def search_faces(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
+        """
+        Search the face FAISS index with normalization and a basic similarity filter.
+        """
+        # Ensure correct shape and pick first vector if list-of-lists
+        query_embedding = self.ensure_correct_dimension(
+            query_embedding, settings.face_embedding_dimension
+        )
+        if isinstance(query_embedding, list) and isinstance(query_embedding[0], list):
+            query_embedding = query_embedding[0]
 
-    #     top_k = top_k or settings.top_k_results
-    #     results = self.faiss_faces.search(query_embedding, top_k)
-    #     if results:
-    #         similarities = [r.get("similarity", 0) for r in results]
-    #         logger.info(
-    #             "Face search similarity range: min=%.4f, max=%.4f",
-    #             min(similarities),
-    #             max(similarities),
-    #         )
-    #     return results
+        # Normalize; guard against zero vector
+        vec = np.asarray(query_embedding, dtype=np.float32)
+        norm = np.linalg.norm(vec)
+        if norm == 0:
+            logger.warning("Face search skipped: zero-norm query embedding")
+            return []
+        query_embedding = (vec / norm).tolist()
+
+        # Limit to a small, relevant set
+        top_k = top_k or min(settings.top_k_results or 5, 5)
+        results = self.faiss_faces.search(query_embedding, top_k)
+
+        # Filter very low similarity hits (FAISS returns cosine similarity in [0,1])
+        MIN_SIMILARITY = 0.35
+        filtered = [r for r in results if r.get("similarity", 0) >= MIN_SIMILARITY]
+
+        if filtered:
+            similarities = [r.get("similarity", 0) for r in filtered]
+            logger.info(
+                f"Face search similarity range (filtered): min={min(similarities)}, max={max(similarities)}",
+            )
+        else:
+            logger.info(
+                f"Face search returned no results above similarity threshold {MIN_SIMILARITY}",
+            )
+        return filtered
 
     # Object operations
     def store_objects(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:

@@ -4,6 +4,7 @@ Centralized embedding generation manager
 """
 from typing import List, Any, Union
 import numpy as np
+import cv2
 from backend.embeddings.text_embedder import TextEmbedder
 from backend.embeddings.image_embedder import ImageEmbedder
 from backend.embeddings.face_embedder import FaceEmbedder
@@ -53,6 +54,19 @@ class EmbeddingManager:
     def generate_face_embedding(self, face_data: Any) -> List[float]:
         """Generate face embedding"""
         return self.face_embedder.generate_embedding(face_data)
+
+    def generate_face_embedding_from_bytes(self, image_bytes: bytes) -> List[float]:
+        """Generate face embedding from raw image bytes."""
+        try:
+            array = np.frombuffer(image_bytes, np.uint8)
+            image = cv2.imdecode(array, cv2.IMREAD_COLOR)
+            if image is None:
+                logger.warning("Failed to decode image bytes for face embedding")
+                return self.face_embedder.generate_embedding(None)
+            return self.face_embedder.generate_embedding(image)
+        except Exception as exc:
+            logger.error("Error generating face embedding from bytes: %s", exc)
+            return self.face_embedder.generate_embedding(None)
     
     def generate_face_embeddings(self, faces: List[Any]) -> List[List[float]]:
         """Generate batch of face embeddings"""

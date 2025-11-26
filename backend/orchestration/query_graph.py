@@ -4,6 +4,9 @@ LangGraph-based query pipeline
 Follows the architecture from Image 2
 """
 from typing import Literal, Dict, Any
+from datetime import datetime
+from pathlib import Path
+import json
 import numpy as np
 from langgraph.graph import StateGraph, END
 from backend.orchestration.state_models import QueryState
@@ -44,13 +47,14 @@ class QueryPipeline:
         workflow.add_node("detect_query_type", self.detect_query_type)
         workflow.add_node("generate_text_embedding", self.generate_text_embedding)
         # workflow.add_node("generate_context_and_combine", self.generate_context_and_combine)
-        # workflow.add_node("generate_image_embedding", self.generate_image_embedding)
+        workflow.add_node("generate_image_embedding", self.generate_image_embedding)
+        workflow.add_node("generate_face_embedding", self.generate_face_embedding)
         
     #     # Search nodes
         workflow.add_node("search_text_faiss", self.search_text_faiss)
         workflow.add_node("search_image_faiss_from_text", self.search_image_faiss_from_text)
     #     workflow.add_node("search_image_faiss_from_image", self.search_image_faiss_from_image)
-    #     workflow.add_node("search_face_faiss", self.search_face_faiss)
+        workflow.add_node("search_face_faiss", self.search_face_faiss)
     #     workflow.add_node("search_object_faiss", self.search_object_faiss)
         
     #     # Aggregation nodes
@@ -68,7 +72,7 @@ class QueryPipeline:
             {
                 "text_only": "generate_text_embedding",
                 # "text_image": "generate_context_and_combine",
-                # "face_search": "generate_image_embedding",
+                "face_search": "generate_face_embedding",
                 # "object_search": "generate_image_embedding"
             }
         )
@@ -83,7 +87,7 @@ class QueryPipeline:
         
     #     # Image-based searches (parallel)
     #     workflow.add_edge("generate_image_embedding", "search_image_faiss_from_image")
-    #     workflow.add_edge("generate_image_embedding", "search_face_faiss")
+        workflow.add_edge("generate_face_embedding", "search_face_faiss")
     #     workflow.add_edge("generate_image_embedding", "search_object_faiss")
         
     #     # Route to appropriate aggregator
@@ -113,18 +117,17 @@ class QueryPipeline:
                 # "aggregate_multimodal": "aggregate_multimodal"
             }
         )
-          #     workflow.add_conditional_edges(
-    #         "search_image_faiss_from_text",
-    #         self.route_to_aggregator,
-    #         {
-    #             "aggregate_text_only": "aggregate_text_only",
-    #             "aggregate_multimodal": "aggregate_multimodal"
-    #         }
-    #     )
+        workflow.add_conditional_edges(
+            "search_face_faiss",
+            self.route_to_aggregator,
+            {
+                "aggregate_text_only": "aggregate_text_only",
+                # "aggregate_multimodal": "aggregate_multimodal"
+            }
+        )
         
     #     # Image searches always go to multimodal aggregator
     #     workflow.add_edge("search_image_faiss_from_image", "aggregate_multimodal")
-    #     workflow.add_edge("search_face_faiss", "aggregate_multimodal")
     #     workflow.add_edge("search_object_faiss", "aggregate_multimodal")
         
     #     # Final steps
@@ -253,18 +256,30 @@ class QueryPipeline:
     #         logger.error(f"Error generating context: {e}")
     #         return {"combined_query": state["query_text"]}
     
-    # def generate_image_embedding(self, state: QueryState) -> QueryState:
-    #     """Generate image query embedding"""
-    #     logger.info("Generating image embedding")
+    def generate_image_embedding(self, state: QueryState) -> QueryState:
+        """Generate image query embedding"""
+        logger.info("Generating image embedding")
         
-    #     try:
-    #         embedding = self.embedding_manager.generate_image_embedding_from_bytes(
-    #             state["query_image"]
-    #         )
-    #         return {"image_query_embedding": embedding}
-    #     except Exception as e:
-    #         logger.error(f"Error generating image embedding: {e}")
-    #         return {}
+        try:
+            embedding = self.embedding_manager.generate_image_embedding_from_bytes(
+                state["query_image"]
+            )
+            return {"image_query_embedding": embedding}
+        except Exception as e:
+            logger.error(f"Error generating image embedding: {e}")
+            return {}
+
+    def generate_face_embedding(self, state: QueryState) -> QueryState:
+        """Generate face query embedding"""
+        logger.info("Generating face embedding")
+        try:
+            embedding = self.embedding_manager.generate_face_embedding_from_bytes(
+                state["query_image"]
+            )
+            return {"image_query_embedding": embedding}
+        except Exception as e:
+            logger.error(f"Error generating face embedding: {e}")
+            return {}
     
     # # Search nodes
     
@@ -353,18 +368,18 @@ class QueryPipeline:
     #         logger.error(f"Error searching images: {e}")
     #         return {"results_from_image_faiss_image": []}
     
-    # def search_face_faiss(self, state: QueryState) -> QueryState:
-    #     """Search face FAISS"""
-    #     logger.info("Searching face FAISS")
+    def search_face_faiss(self, state: QueryState) -> QueryState:
+        """Search face FAISS"""
+        logger.info("Searching face FAISS")
         
-    #     try:
-    #         results = self.store_manager.search_faces(
-    #             state["image_query_embedding"]
-    #         )
-    #         return {"results_from_face_faiss": results}
-    #     except Exception as e:
-    #         logger.error(f"Error searching faces: {e}")
-    #         return {"results_from_face_faiss": []}
+        try:
+            results = self.store_manager.search_faces(
+                state["image_query_embedding"]
+            )
+            return {"results_from_face_faiss": results}
+        except Exception as e:
+            logger.error(f"Error searching faces: {e}")
+            return {"results_from_face_faiss": []}
     
     # def search_object_faiss(self, state: QueryState) -> QueryState:
     #     """Search object FAISS"""
@@ -387,14 +402,16 @@ class QueryPipeline:
         
         text_results = state.get("results_from_text_faiss", [])
         image_text_results = state.get("results_from_image_faiss_text", [])
+        face_results = state.get("results_from_face_faiss", [])
         # Normalize content key so grouping functions can use it
-        all_results = text_results + image_text_results
+        all_results = text_results + image_text_results + face_results
         for res in all_results:
             if not res.get("content"):
                 res["content"] = (
                     res.get("content_preview")
                     or res.get("chunk_content")
                     or res.get("context")
+                    or (f"Face match in {res.get('image') or res.get('file_path')}" if res.get("image") or res.get("file_path") else None)
                 )
 
         # Rerank results and then group by file to keep distinct files only
@@ -409,6 +426,9 @@ class QueryPipeline:
             reverse=True,
         )
         top_files = sorted_files[: settings.top_k_results] if settings.top_k_results else sorted_files[:5]
+
+        # Persist image contexts (one entry per image file) for auditing/debugging
+        self._log_image_contexts(top_files)
 
         # Build context string with per-file chunk counts and combined chunks
         context_parts = []
@@ -537,3 +557,35 @@ class QueryPipeline:
         logger.info("Query pipeline completed")
         print("Query Pipeline 4")
         return result
+
+    def _is_image_path(self, file_path: str) -> bool:
+        """Check if the path looks like an image."""
+        if not file_path:
+            return False
+        lowered = file_path.lower()
+        return lowered.endswith((".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tiff"))
+
+    def _log_image_contexts(self, file_entries):
+        """Append image contexts to a JSONL log for later inspection."""
+        try:
+            log_dir = Path(__file__).resolve().parent.parent / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / "image_context_log.jsonl"
+            timestamp = datetime.utcnow().isoformat() + "Z"
+
+            with log_path.open("a", encoding="utf-8") as f:
+                for file_path, file_data in file_entries:
+                    is_image = self._is_image_path(str(file_path)) or file_data.get("type") in ("image", "image_context")
+                    if not is_image:
+                        continue
+                    entry = {
+                        "timestamp": timestamp,
+                        "file_path": str(file_path),
+                        "type": file_data.get("type", "unknown"),
+                        "similarity": file_data.get("confidence", 0),
+                        "contexts": file_data.get("contexts", []),
+                        "full_context": file_data.get("full_context", ""),
+                    }
+                    f.write(json.dumps(entry) + "\n")
+        except Exception as e:
+            logger.error("Failed to log image contexts: %s", e)
