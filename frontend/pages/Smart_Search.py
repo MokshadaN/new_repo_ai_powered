@@ -2,6 +2,7 @@
 Smart semantic search page
 """
 import streamlit as st
+import os
 import sys
 from pathlib import Path
 
@@ -46,10 +47,10 @@ uploaded_image = st.file_uploader(
 
 
 def _group_results_by_file(results):
-    """Group search results by file_path and keep chunk text with similarity."""
+    """Group search results by file_path and keep only the best chunk per file."""
     grouped = {}
     for res in results or []:
-        file_path = res.get('file_path', 'Unknown')
+        file_path = res.get('file_path') or res.get('image') or res.get('path') or 'Unknown'
         chunk_text = (
             res.get('chunk_content')
             or res.get('content_preview')
@@ -59,18 +60,24 @@ def _group_results_by_file(results):
         )
         if not chunk_text:
             continue
-        sim = res.get('similarity', 0)
-        grouped.setdefault(file_path, []).append({
-            'text': chunk_text,
-            'similarity': sim,
-            'type': res.get('type', 'unknown'),
-            'chunk_id': res.get('chunk_id'),
-        })
 
-    # Sort chunks per file by similarity desc
-    for file_path in grouped:
-        grouped[file_path] = sorted(grouped[file_path], key=lambda c: c.get('similarity', 0), reverse=True)
-    return grouped
+        # Prefer final_score (already combines similarity + type weighting), fallback to similarity
+        score = res.get('final_score', res.get('similarity', 0))
+        similarity = res.get('similarity', 0)
+
+        current_best = grouped.get(file_path)
+        if current_best is None or score > current_best.get('score', 0):
+            grouped[file_path] = {
+                'text': chunk_text,
+                'similarity': similarity,
+                'score': score,
+                'type': res.get('type', 'unknown'),
+                'chunk_id': res.get('chunk_id'),
+            }
+
+    # Convert to list of tuples sorted by score desc
+    sorted_items = sorted(grouped.items(), key=lambda item: item[1].get('score', 0), reverse=True)
+    return sorted_items
 
 # Search button
 if st.button("🔍 Search", type="primary"):
@@ -116,27 +123,27 @@ if st.button("🔍 Search", type="primary"):
                 # Show detailed results
                 st.markdown("### Detailed Results")
                 
-                reranked_results = result.get('results_from_text_faiss', [])
+                # Prefer the reranked+deduplicated results returned by the pipeline
+                reranked_results = result.get('reranked_results', []) or result.get('results_from_text_faiss', [])
                 grouped_results = _group_results_by_file(reranked_results)
 
                 if not grouped_results:
                     st.warning("No results found")
                 else:
-                    for idx, (file_path, chunks) in enumerate(grouped_results.items(), 1):
+                    for idx, (file_path, chunk) in enumerate(grouped_results, 1):
                         with st.container():
                             st.markdown(f"**{idx}. {file_path}**")
-                            for chunk in chunks:
-                                chunk_id = chunk.get('chunk_id')
-                                label = f"Chunk {chunk_id}" if chunk_id is not None else "Relevant Chunk"
-                                st.markdown(f"**{label}:**")
-                                st.markdown(chunk.get('text', 'N/A'))
-                                st.metric("Similarity", f"{chunk.get('similarity', 0):.2%}")
-                                st.badge(chunk.get('type', 'unknown'))
-                                st.divider()
+                            chunk_id = chunk.get('chunk_id')
+                            label = f"Chunk {chunk_id}" if chunk_id is not None else "Top Match"
+                            st.markdown(f"**{label}:**")
+                            st.markdown(chunk.get('text', 'N/A'))
+                            st.metric("Similarity", f"{chunk.get('similarity', 0):.2%}")
+                            st.badge(chunk.get('type', 'unknown'))
+                            st.divider()
 
                             if show_metadata:
                                 with st.expander("Show metadata"):
-                                    st.json(chunks)
+                                    st.json(chunk)
                             
                             st.markdown("---")
                 

@@ -65,21 +65,24 @@ class HybridSearch:
         return type_preferences.get(result_type, 0.5)
     
     def deduplicate_results(self, results: List[Dict], threshold: float = 0.95) -> List[Dict]:
-        """Remove duplicate or very similar results"""
+        """Keep only the best-scoring chunk per file/image to avoid duplicate listings."""
         if not results:
             return results
-        
-        unique_results = []
-        seen_hashes = set()
-        
+
+        best_by_file = {}
         for result in results:
-            # Create a simple hash based on file path
-            file_path = result.get('file_path', result.get('image', ''))
-            if file_path not in seen_hashes:
-                seen_hashes.add(file_path)
-                unique_results.append(result)
-        
-        return unique_results
+            file_path = result.get('file_path') or result.get('image') or result.get('path', '')
+            if not file_path:
+                continue
+
+            current_best = best_by_file.get(file_path)
+            # Prefer final_score when available (already includes similarity/type weighting); fall back to similarity.
+            score = result.get('final_score', result.get('similarity', 0))
+            best_score = current_best.get('final_score', current_best.get('similarity', 0)) if current_best else None
+            if best_score is None or score > best_score:
+                best_by_file[file_path] = result
+
+        return list(best_by_file.values())
     
     def group_by_file_path(self, results: List[Dict]) -> Dict[str, Dict]:
         """Group results by file path and consolidate context for LLM
@@ -107,28 +110,30 @@ class HybridSearch:
                 grouped[file_path] = {
                     'file_path': file_path,
                     'type': result.get('type', 'unknown'),
-                    'contexts': [],  # List of all contexts for this file
+                    'contexts': [],  # Only the best context per file will be kept
                     'full_context': '',  # Combined context for LLM
                     'confidence': result.get('similarity', 0),
                     'relevance_count': 0
                 }
             
-            # Add this result to contexts
+            # Add this result to contexts, but keep only the best chunk per file (by similarity)
             content = result.get('content', '')
+            similarity = result.get('similarity', 0)
             context_entry = {
-                'similarity': result.get('similarity', 0),
+                'similarity': similarity,
                 'distance': result.get('distance', 1),
                 'content': content,
                 'source_type': result.get('type', 'unknown'),
                 'final_score': result.get('final_score', 0)
             }
-            
-            grouped[file_path]['contexts'].append(context_entry)
+
             grouped[file_path]['relevance_count'] += 1
-            
-            # Update confidence (best similarity)
-            if result.get('similarity', 0) > grouped[file_path]['confidence']:
-                grouped[file_path]['confidence'] = result.get('similarity', 0)
+
+            existing_contexts = grouped[file_path]['contexts']
+            if not existing_contexts or similarity > existing_contexts[0].get('similarity', 0):
+                # Replace with the higher-similarity chunk to avoid flooding context with all chunks
+                grouped[file_path]['contexts'] = [context_entry]
+                grouped[file_path]['confidence'] = similarity
         
         # Build full context for LLM by combining all content
         for file_path, file_data in grouped.items():

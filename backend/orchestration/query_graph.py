@@ -399,6 +399,7 @@ class QueryPipeline:
 
         # Rerank results and then group by file to keep distinct files only
         reranked = self.hybrid_search.rerank(all_results, state["query_text"])
+        reranked = self.hybrid_search.deduplicate_results(reranked)
         grouped = self.hybrid_search.group_by_file_path(reranked)
 
         # Pick top files by confidence/final score
