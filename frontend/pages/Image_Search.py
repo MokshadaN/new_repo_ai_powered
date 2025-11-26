@@ -242,6 +242,7 @@ sys.path.insert(0, str(backend_path))
 
 from backend.search.face_search import FaceSearch
 from backend.search.semantic_search import SemanticSearch
+from backend.orchestration.query_graph import QueryPipeline
 from backend.utils.logger import app_logger as logger
 
 st.set_page_config(page_title="Image Search", page_icon="🖼️", layout="wide")
@@ -262,15 +263,16 @@ def initialize_search_engines():
     try:
         semantic_search = SemanticSearch()
         face_search = FaceSearch()
-        return semantic_search, face_search
+        query_pipeline = QueryPipeline()
+        return semantic_search, face_search, query_pipeline
     except Exception as e:
         st.error(f"Failed to initialize search engines: {e}")
         logger.error(f"Search engine initialization error: {e}")
-        return None, None
+        return None, None, None
 
 # Initialize and check if successful
-semantic_search, face_search = initialize_search_engines()
-if semantic_search is None or face_search is None:
+semantic_search, face_search, query_pipeline = initialize_search_engines()
+if semantic_search is None or face_search is None or query_pipeline is None:
     st.stop()
 
 def display_image_results(results, image_key='file_path', similarity_key='similarity'):
@@ -508,46 +510,48 @@ else:  # Object Search
         value="car",  # Default for testing
         placeholder="e.g., 'car', 'laptop', 'cat'"
     )
+
+    uploaded_obj = st.file_uploader(
+        "Optional: upload an image to search for objects visually",
+        type=['png', 'jpg', 'jpeg'],
+        key="object_image_upload"
+    )
     
     if st.button("Search for Object"):
-        if object_query:
+        if object_query or uploaded_obj:
             with st.spinner("Searching..."):
                 try:
-                    results = semantic_search.search_by_type(object_query, 'object', top_k=20)
-                    
-                    if results:
-                        st.success(f"Found {len(results)} images with '{object_query}'")
-                        
-                        # Display object-specific results
+                    # Prepare image bytes if provided
+                    image_bytes = uploaded_obj.read() if uploaded_obj else None
+                    result = query_pipeline.run(object_query, image_bytes)
+
+                    reranked_results = result.get('reranked_results', []) or result.get('results_from_object_faiss', [])
+                    if not reranked_results:
+                        st.warning(f"No images found with '{object_query or 'image'}'")
+                    else:
+                        st.success(f"Found {len(reranked_results)} object hits")
                         cols = st.columns(4)
-                        for idx, result in enumerate(results):
+                        for idx, res in enumerate(reranked_results):
                             with cols[idx % 4]:
-                                img_path = result.get('image') or result.get('file_path')
-                                
+                                img_path = res.get('image') or res.get('image_path') or res.get('file_path')
                                 if not img_path or not os.path.exists(str(img_path)):
                                     st.error("Image not found")
                                     continue
-                                
                                 try:
                                     img = Image.open(img_path)
                                     img.thumbnail((200, 200))
                                     st.image(img, width='stretch')
-                                    
-                                    label = result.get('label', 'unknown')
-                                    confidence = result.get('confidence', 0)
+                                    label = res.get('label', 'object')
+                                    confidence = res.get('confidence', res.get('similarity', 0))
                                     st.write(f"{label} ({confidence:.2%})")
-                                    
                                 except Exception as img_error:
                                     st.error("Unable to load image")
                                     logger.error(f"Object image display error: {img_error}")
-                    else:
-                        st.warning(f"No images found with '{object_query}'")
-                        
                 except Exception as e:
                     st.error(f"Error: {str(e)}")
                     logger.error(f"Object search error: {e}")
         else:
-            st.warning("Please enter an object to search for")
+            st.warning("Please enter an object or upload an image")
 
 # Sidebar filters
 with st.sidebar:

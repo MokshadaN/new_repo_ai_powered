@@ -595,7 +595,12 @@ class IngestionPipeline:
             embeddings = state.get("object_embeddings", [])
             
             if objects and embeddings:
+                logger.info("store_objects_faiss: storing %d objects", len(objects))
+                labels = [o.get("label") for o in objects]
+                logger.info("store_objects_faiss: labels=%s", labels)
                 self.store_manager.store_objects(embeddings, objects)
+            else:
+                logger.info("store_objects_faiss: nothing to store (objects=%d, embeddings=%d)", len(objects), len(embeddings))
             return {}
         except Exception as e:
             logger.error(f"Error storing objects: {e}")

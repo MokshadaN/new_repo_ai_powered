@@ -33,8 +33,11 @@ class ObjectDetector:
         """Detect objects in multiple images"""
         all_objects = []
         
+        logger.info("ObjectDetector: detecting on %d images", len(images))
         for image in images:
+            logger.info("ObjectDetector: processing %s", image if isinstance(image, str) else image.get("path"))
             objects = self._detect_in_image(image)
+            logger.info("ObjectDetector: found %d objects in image", len(objects))
             all_objects.extend(objects)
         
         logger.info(f"Detected {len(all_objects)} objects across {len(images)} images")
@@ -52,10 +55,12 @@ class ObjectDetector:
                 return []
             
             if not self.model:
+                logger.warning("YOLO model not loaded; using mock detection.")
                 return self._mock_detection(image_path)
             
             # Perform detection
             results = self.model(image_path, verbose=False)
+            logger.info("YOLO returned %d result batches for %s", len(results), image_path)
             
             detected_objects = []
             for result in results:
@@ -68,6 +73,7 @@ class ObjectDetector:
                         cls = int(box.cls[0])
                         label = result.names[cls]
                         bbox = box.xyxy[0].cpu().numpy().tolist()
+                        logger.info("Detection: label=%s conf=%.3f bbox=%s", label, confidence, bbox)
                         
                         detected_objects.append({
                             'image': image_path,

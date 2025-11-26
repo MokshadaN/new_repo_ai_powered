@@ -39,15 +39,17 @@ with st.expander("Advanced Options"):
         enable_rerank = st.checkbox("Enable reranking", value=True)
         show_metadata = st.checkbox("Show metadata", value=False)
 
-# Image upload for multimodal search
+# Image upload for multimodal/object search
 uploaded_image = st.file_uploader(
-    "Upload an image for visual search (optional)",
+    "Upload an image for visual search or object search (optional)",
     type=['png', 'jpg', 'jpeg']
 )
 
 
 def _group_results_by_file(results):
-    """Group search results by file_path and keep only the best chunk per file."""
+    """Group search results by file_path and keep only the best chunk per file.
+    If a face result has no text, fall back to its image path and confidence.
+    """
     grouped = {}
     for res in results or []:
         file_path = res.get('file_path') or res.get('image') or res.get('path') or 'Unknown'
@@ -58,12 +60,17 @@ def _group_results_by_file(results):
             or res.get('context')
             or res.get('text')
         )
-        if not chunk_text:
-            continue
+        # Handle face results that only carry image paths/confidence
+        image_path = res.get('image') or res.get('image_path')
+        if not chunk_text and image_path:
+            chunk_text = f"Face match: {image_path}"
+        # Ensure we still carry a usable path for display
+        if not image_path:
+            image_path = file_path
 
         # Prefer final_score (already combines similarity + type weighting), fallback to similarity
         score = res.get('final_score', res.get('similarity', 0))
-        similarity = res.get('similarity', 0)
+        similarity = res.get('similarity', res.get('confidence', 0))
 
         current_best = grouped.get(file_path)
         if current_best is None or score > current_best.get('score', 0):
@@ -73,31 +80,33 @@ def _group_results_by_file(results):
                 'score': score,
                 'type': res.get('type', 'unknown'),
                 'chunk_id': res.get('chunk_id'),
+                'image_path': image_path,
             }
 
     # Convert to list of tuples sorted by score desc
     sorted_items = sorted(grouped.items(), key=lambda item: item[1].get('score', 0), reverse=True)
     return sorted_items
 
-# Search button
-if st.button("🔍 Search", type="primary"):
-    if search_query or uploaded_image:
+# Search buttons (text/face/object via label or image)
+col_search, col_obj = st.columns([1, 1])
+do_search = col_search.button("🔍 Search (by text/label)", type="primary")
+do_object_image = col_obj.button("🖼️ Search Object by Image", type="secondary", help="Upload an image to search objects visually")
+
+if do_search or do_object_image:
+    # If object-by-image button pressed without an upload, warn early
+    if do_object_image and not uploaded_image:
+        st.warning("Please upload an image to search for objects.")
+    elif search_query or uploaded_image:
         with st.spinner("Searching..."):
             try:
-                # Initialize pipeline
-                print("Search 1")
                 query_pipeline = QueryPipeline()
-                print("Search 2")
-                
-                # Prepare query
                 image_bytes = uploaded_image.read() if uploaded_image else None
-                
-                print("Search 3")
-                # Execute search
-                result = query_pipeline.run(search_query, image_bytes)
-                
-                print("Search 4")
-                # Display results
+
+                # For object-image button, force empty text so image path is used
+                effective_query = "" if do_object_image else search_query
+
+                result = query_pipeline.run(effective_query, image_bytes)
+
                 st.markdown("---")
                 st.markdown("## Search Results")
                 
@@ -123,7 +132,6 @@ if st.button("🔍 Search", type="primary"):
                 # Show detailed results
                 st.markdown("### Detailed Results")
                 
-                # Prefer the reranked+deduplicated results returned by the pipeline
                 reranked_results = result.get('reranked_results', []) or result.get('results_from_text_faiss', [])
                 grouped_results = _group_results_by_file(reranked_results)
 
@@ -136,8 +144,14 @@ if st.button("🔍 Search", type="primary"):
                             chunk_id = chunk.get('chunk_id')
                             label = f"Chunk {chunk_id}" if chunk_id is not None else "Top Match"
                             st.markdown(f"**{label}:**")
-                            st.markdown(chunk.get('text', 'N/A'))
-                            st.metric("Similarity", f"{chunk.get('similarity', 0):.2%}")
+
+                            if chunk.get('image_path'):
+                                st.write(f"**Path:** {chunk['image_path']}")
+                                st.metric("Confidence", f"{chunk.get('similarity', 0):.2%}")
+                            else:
+                                st.markdown(chunk.get('text', 'N/A'))
+                                st.metric("Similarity", f"{chunk.get('similarity', 0):.2%}")
+
                             st.badge(chunk.get('type', 'unknown'))
                             st.divider()
 

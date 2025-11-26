@@ -1,7 +1,7 @@
 """
 Vector store manager - FAISS only
 """
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Any
 
 import numpy as np
 
@@ -221,24 +221,129 @@ class VectorStoreManager:
             logger.info(
                 f"Face search returned no results above similarity threshold {MIN_SIMILARITY}",
             )
-        return filtered
+        # Return only the essentials: image path and confidence/similarity
+        structured = []
+        for r in filtered:
+            path = r.get("image") or r.get("file_path")
+            structured.append(
+                {
+                    "image": path,
+                    "image_path": path,
+                    "confidence": r.get("similarity", 0),
+                }
+            )
+
+        return structured
 
     # Object operations
     def store_objects(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
+        logger.info("store_objects: incoming embeddings=%d metadata=%d", len(embeddings), len(metadata))
         for meta in metadata:
-            logger.info("Storing object embeddings for: %s", meta.get("image", "unknown"))
+            logger.info("Storing object embedding for: %s (label=%s, conf=%.3f)", meta.get("image", "unknown"), meta.get("label"), float(meta.get("confidence", 0)))
 
         processed = [
             self.ensure_correct_dimension(e, settings.object_embedding_dimension) for e in embeddings
         ]
-        return self.faiss_objects.store(processed, metadata)
+        # Ensure similarity/confidence fields exist for later label-only search
+        for meta in metadata:
+            if "similarity" not in meta:
+                meta["similarity"] = meta.get("confidence", 0)
+            if "type" not in meta:
+                meta["type"] = "object"
+        ok = self.faiss_objects.store(processed, metadata)
+        logger.info("store_objects: stored=%s total_index=%d", ok, self.faiss_objects.get_count())
+        return ok
 
-    # def search_objects(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
-    #     query_embedding = self.ensure_correct_dimension(
-    #         query_embedding, settings.object_embedding_dimension
-    #     )
-    #     top_k = top_k or settings.top_k_results
-    #     return self.faiss_objects.search(query_embedding, top_k)
+    def search_objects(self, query_embedding: Any = None, top_k: int | None = None, label_query: str | None = None) -> List[Dict]:
+        """
+        Search the object FAISS index. Supports two modes:
+        - Embedding search (image/object embeddings)
+        - Label search (string match on stored object labels)
+        """
+        # If a text label was passed directly, treat it as a label query
+        if isinstance(query_embedding, str):
+            label_query = query_embedding
+            query_embedding = None
+
+        # Label-only search path (metadata filter)
+        if label_query:
+            needle = label_query.lower()
+            matches = []
+            logger.info("Label search: needle='%s', metadata_count=%d", needle, len(self.faiss_objects.metadata_store))
+            for meta in self.faiss_objects.metadata_store:
+                label = str(meta.get("label", "")).lower()
+                if needle in label:
+                    matches.append(meta | {"similarity": meta.get("similarity", meta.get("confidence", 0))})
+            if not matches:
+                logger.info("Label search: no matches for '%s'. Available labels: %s", needle, list({str(m.get('label', '')).lower() for m in self.faiss_objects.metadata_store}))
+            matches = sorted(matches, key=lambda m: m.get("similarity", 0), reverse=True)
+            top_k = top_k or min(settings.top_k_results or 10, 10)
+            logger.info("Object label search '%s' matched %d entries (returning %d)", label_query, len(matches), min(len(matches), top_k))
+            return [
+                {
+                    "image": m.get("image") or m.get("file_path"),
+                    "image_path": m.get("image") or m.get("file_path"),
+                    "label": m.get("label"),
+                    "confidence": m.get("similarity", 0),
+                    "similarity": m.get("similarity", 0),
+                    "type": m.get("type", "object"),
+                }
+                for m in matches[:top_k]
+            ]
+
+        # Embedding-based search path
+        query_embedding = self.ensure_correct_dimension(
+            query_embedding, settings.object_embedding_dimension
+        )
+        if isinstance(query_embedding, list) and isinstance(query_embedding[0], list):
+            query_embedding = query_embedding[0]
+
+        vec = np.asarray(query_embedding, dtype=np.float32)
+        norm = np.linalg.norm(vec)
+        if norm == 0:
+            logger.warning("Object search skipped: zero-norm query embedding")
+            return []
+        query_embedding = (vec / norm).tolist()
+
+        top_k = top_k or min(settings.top_k_results or 10, 10)
+        logger.info("Object embedding search: top_k=%d", top_k)
+        results = self.faiss_objects.search(query_embedding, top_k)
+
+        MIN_SIMILARITY = 0.25
+        filtered = [r for r in results if r.get("similarity", 0) >= MIN_SIMILARITY]
+
+        if filtered:
+            sims = [r.get("similarity", 0) for r in filtered]
+            logger.info(
+                "Object search similarity range (filtered): min=%.4f, max=%.4f",
+                min(sims),
+                max(sims),
+            )
+        else:
+            logger.info(
+                "Object search returned no results above similarity threshold %.2f",
+                MIN_SIMILARITY,
+            )
+        # Deduplicate by (image_path, label) keeping highest similarity
+        best = {}
+        for r in filtered:
+            path = r.get("image") or r.get("file_path")
+            label = r.get("label")
+            key = (path, label)
+            if key not in best or r.get("similarity", 0) > best[key].get("similarity", 0):
+                best[key] = r
+
+        return [
+            {
+                "image": r.get("image") or r.get("file_path"),
+                "image_path": r.get("image") or r.get("file_path"),
+                "label": r.get("label"),
+                "confidence": r.get("similarity", 0),
+                "similarity": r.get("similarity", 0),
+                "type": r.get("type", "object"),
+            }
+            for r in best.values()
+        ]
 
     # # Stats & helpers
     # def get_statistics(self) -> Dict:

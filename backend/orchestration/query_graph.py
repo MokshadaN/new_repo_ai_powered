@@ -55,11 +55,11 @@ class QueryPipeline:
         workflow.add_node("search_image_faiss_from_text", self.search_image_faiss_from_text)
     #     workflow.add_node("search_image_faiss_from_image", self.search_image_faiss_from_image)
         workflow.add_node("search_face_faiss", self.search_face_faiss)
-    #     workflow.add_node("search_object_faiss", self.search_object_faiss)
+        workflow.add_node("search_object_faiss", self.search_object_faiss)
         
     #     # Aggregation nodes
         workflow.add_node("aggregate_text_only", self.aggregate_text_only)
-    #     workflow.add_node("aggregate_multimodal", self.aggregate_multimodal)
+        workflow.add_node("aggregate_multimodal", self.aggregate_multimodal)
         workflow.add_node("invoke_llm", self.invoke_llm)
         
     #     # Define edges
@@ -84,11 +84,12 @@ class QueryPipeline:
     #     # Text-based searches (parallel)
         workflow.add_edge("generate_text_embedding", "search_text_faiss")
         workflow.add_edge("generate_text_embedding", "search_image_faiss_from_text")
+        workflow.add_edge("generate_text_embedding", "search_object_faiss")
         
     #     # Image-based searches (parallel)
     #     workflow.add_edge("generate_image_embedding", "search_image_faiss_from_image")
         workflow.add_edge("generate_face_embedding", "search_face_faiss")
-    #     workflow.add_edge("generate_image_embedding", "search_object_faiss")
+        workflow.add_edge("generate_image_embedding", "search_object_faiss")
         
     #     # Route to appropriate aggregator
     #     workflow.add_conditional_edges(
@@ -105,7 +106,7 @@ class QueryPipeline:
             self.route_to_aggregator,
             {
                 "aggregate_text_only": "aggregate_text_only",
-                # "aggregate_multimodal": "aggregate_multimodal"
+                "aggregate_multimodal": "aggregate_multimodal"
             }
         )
         
@@ -114,7 +115,7 @@ class QueryPipeline:
             self.route_to_aggregator,
             {
                 "aggregate_text_only": "aggregate_text_only",
-                # "aggregate_multimodal": "aggregate_multimodal"
+                "aggregate_multimodal": "aggregate_multimodal"
             }
         )
         workflow.add_conditional_edges(
@@ -122,17 +123,24 @@ class QueryPipeline:
             self.route_to_aggregator,
             {
                 "aggregate_text_only": "aggregate_text_only",
-                # "aggregate_multimodal": "aggregate_multimodal"
+                "aggregate_multimodal": "aggregate_multimodal"
+            }
+        )
+        workflow.add_conditional_edges(
+            "search_object_faiss",
+            self.route_to_aggregator,
+            {
+                "aggregate_text_only": "aggregate_text_only",
+                "aggregate_multimodal": "aggregate_multimodal"
             }
         )
         
     #     # Image searches always go to multimodal aggregator
     #     workflow.add_edge("search_image_faiss_from_image", "aggregate_multimodal")
-    #     workflow.add_edge("search_object_faiss", "aggregate_multimodal")
         
     #     # Final steps
         workflow.add_edge("aggregate_text_only", "invoke_llm")
-    #     workflow.add_edge("aggregate_multimodal", "invoke_llm")
+        workflow.add_edge("aggregate_multimodal", "invoke_llm")
         workflow.add_edge("invoke_llm", END)
 
         # Return the constructed workflow
@@ -159,6 +167,7 @@ class QueryPipeline:
             query_type = "text_only"
         
         logger.info(f"Query type: {query_type}")
+        print(f"Query type: {query_type}")
         return {"query_type": query_type}
     
     def generate_text_embedding(self, state: QueryState) -> QueryState:
@@ -381,18 +390,30 @@ class QueryPipeline:
             logger.error(f"Error searching faces: {e}")
             return {"results_from_face_faiss": []}
     
-    # def search_object_faiss(self, state: QueryState) -> QueryState:
-    #     """Search object FAISS"""
-    #     logger.info("Searching object FAISS")
+    def search_object_faiss(self, state: QueryState) -> QueryState:
+        """Search object FAISS"""
+        print("O1")
+        logger.info("Searching object FAISS")
         
-    #     try:
-    #         results = self.store_manager.search_objects(
-    #             state["image_query_embedding"]
-    #         )
-    #         return {"results_from_object_faiss": results}
-    #     except Exception as e:
-    #         logger.error(f"Error searching objects: {e}")
-    #         return {"results_from_object_faiss": []}
+        try:
+            # Prefer label/text search when no image embedding is present
+            print("O2")
+            image_emb = state.get("image_query_embedding")
+            print("O3")
+            if image_emb:
+                print("in if O4")
+                logger.info("Object search using image embedding")
+                results = self.store_manager.search_objects(image_emb)
+            else:
+                print("in else O4")
+                logger.info("Object search using label query: %s", state.get("query_text", ""))
+                results = self.store_manager.search_objects(label_query=state.get("query_text", ""))
+            print("O5")
+            logger.info("Object search returned %d results", len(results))
+            return {"results_from_object_faiss": results}
+        except Exception as e:
+            logger.error(f"Error searching objects: {e}")
+            return {"results_from_object_faiss": []}
     
     # # Aggregation nodes
     
@@ -403,8 +424,9 @@ class QueryPipeline:
         text_results = state.get("results_from_text_faiss", [])
         image_text_results = state.get("results_from_image_faiss_text", [])
         face_results = state.get("results_from_face_faiss", [])
+        object_results = state.get("results_from_object_faiss", [])
         # Normalize content key so grouping functions can use it
-        all_results = text_results + image_text_results + face_results
+        all_results = text_results + image_text_results + face_results + object_results
         for res in all_results:
             if not res.get("content"):
                 res["content"] = (
@@ -412,6 +434,7 @@ class QueryPipeline:
                     or res.get("chunk_content")
                     or res.get("context")
                     or (f"Face match in {res.get('image') or res.get('file_path')}" if res.get("image") or res.get("file_path") else None)
+                    or (f"Object match ({res.get('label')}) in {res.get('image') or res.get('file_path')}" if res.get("label") else None)
                 )
 
         # Rerank results and then group by file to keep distinct files only
@@ -448,55 +471,55 @@ class QueryPipeline:
             "reranked_results": reranked,
         }
     
-    # def aggregate_multimodal(self, state: QueryState) -> QueryState:
-    #     """Aggregate all multimodal search results"""
-    #     logger.info("Aggregating multimodal results")
+    def aggregate_multimodal(self, state: QueryState) -> QueryState:
+        """Aggregate all multimodal search results"""
+        logger.info("Aggregating multimodal results")
         
-    #     text_results = state.get("results_from_text_faiss", [])
-    #     image_text_results = state.get("results_from_image_faiss_text", [])
-    #     image_results = state.get("results_from_image_faiss_image", [])
-    #     face_results = state.get("results_from_face_faiss", [])
-    #     object_results = state.get("results_from_object_faiss", [])
+        text_results = state.get("results_from_text_faiss", [])
+        image_text_results = state.get("results_from_image_faiss_text", [])
+        image_results = state.get("results_from_image_faiss_image", [])
+        face_results = state.get("results_from_face_faiss", [])
+        object_results = state.get("results_from_object_faiss", [])
         
-    #     # Combine all context
-    #     context_parts = []
+        # Combine all context
+        context_parts = []
         
-    #     if text_results:
-    #         context_parts.append("=== Text Documents ===")
-    #         for i, result in enumerate(text_results[:3], 1):
-    #             context_parts.append(f"{i}. {result.get('content_preview', 'N/A')}")
+        if text_results:
+            context_parts.append("=== Text Documents ===")
+            for i, result in enumerate(text_results[:3], 1):
+                context_parts.append(f"{i}. {result.get('content_preview', 'N/A')}")
         
-    #     if image_text_results:
-    #         context_parts.append("\n=== Images (text-based search) ===")
-    #         for i, result in enumerate(image_text_results[:3], 1):
-    #             context_parts.append(f"{i}. {result.get('context', 'N/A')}")
+        if image_text_results:
+            context_parts.append("\n=== Images (text-based search) ===")
+            for i, result in enumerate(image_text_results[:3], 1):
+                context_parts.append(f"{i}. {result.get('context', 'N/A')}")
         
-    #     if image_results:
-    #         context_parts.append("\n=== Images (visual similarity) ===")
-    #         for i, result in enumerate(image_results[:3], 1):
-    #             context_parts.append(f"{i}. Image: {result.get('file_path', 'N/A')}")
+        if image_results:
+            context_parts.append("\n=== Images (visual similarity) ===")
+            for i, result in enumerate(image_results[:3], 1):
+                context_parts.append(f"{i}. Image: {result.get('file_path', 'N/A')}")
         
-    #     if face_results:
-    #         context_parts.append("\n=== Detected Faces ===")
-    #         for i, result in enumerate(face_results[:3], 1):
-    #             context_parts.append(f"{i}. Face in: {result.get('image', 'N/A')}")
+        if face_results:
+            context_parts.append("\n=== Detected Faces ===")
+            for i, result in enumerate(face_results[:3], 1):
+                context_parts.append(f"{i}. Face in: {result.get('image', 'N/A')}")
         
-    #     if object_results:
-    #         context_parts.append("\n=== Detected Objects ===")
-    #         for i, result in enumerate(object_results[:3], 1):
-    #             context_parts.append(f"{i}. {result.get('label', 'N/A')} in {result.get('image', 'N/A')}")
+        if object_results:
+            context_parts.append("\n=== Detected Objects ===")
+            for i, result in enumerate(object_results[:3], 1):
+                context_parts.append(f"{i}. {result.get('label', 'N/A')} in {result.get('image', 'N/A')}")
         
-    #     context = "\n".join(context_parts)
+        context = "\n".join(context_parts)
         
-    #     # Rerank all results
-    #     all_results = (text_results + image_text_results + image_results + 
-    #                   face_results + object_results)
-    #     reranked = self.hybrid_search.rerank(all_results, state.get("combined_query") or state["query_text"])
+        # Rerank all results
+        all_results = (text_results + image_text_results + image_results + 
+                      face_results + object_results)
+        reranked = self.hybrid_search.rerank(all_results, state.get("combined_query") or state["query_text"])
         
-    #     return {
-    #         "aggregated_context": context,
-    #         "reranked_results": reranked
-    #     }
+        return {
+            "aggregated_context": context,
+            "reranked_results": reranked
+        }
     
     def invoke_llm(self, state: QueryState) -> QueryState:
         """Generate final response using LLM"""
