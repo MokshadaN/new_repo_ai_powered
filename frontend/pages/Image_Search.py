@@ -250,6 +250,10 @@ st.set_page_config(page_title="Image Search", page_icon="🖼️", layout="wide"
 st.title("🖼️ Image Search")
 st.markdown("Search images by content, faces, or objects")
 
+# Default similarity threshold (used only for Image→Image flow)
+if "image_search_min_sim" not in st.session_state:
+    st.session_state["image_search_min_sim"] = 0.90
+
 # Search mode selector
 search_mode = st.radio(
     "Search mode:",
@@ -275,18 +279,32 @@ semantic_search, face_search, query_pipeline = initialize_search_engines()
 if semantic_search is None or face_search is None or query_pipeline is None:
     st.stop()
 
-def display_image_results(results, image_key='file_path', similarity_key='similarity'):
+def display_image_results(results, image_key='file_path', similarity_key='similarity', min_similarity: float | None = None):
     """Display search results with proper error handling"""
-    if not results:
+    threshold = float(min_similarity) if min_similarity is not None else 0.0
+
+    normalized = []
+    for r in (results or []):
+        raw = r.get(similarity_key, 0) or 0
+        # FAISS IP can be [-1, 1]; shift to [0,1] for filtering and display
+        scaled = max(0.0, min(1.0, (raw + 1.0) / 2.0))
+        r = dict(r)
+        r["_scaled_similarity"] = scaled
+        normalized.append(r)
+
+    filtered = [r for r in normalized if r["_scaled_similarity"] >= threshold]
+
+    if not filtered:
         st.warning("No images found")
         return
     
-    st.success(f"Found {len(results)} images")
+    filtered = sorted(filtered, key=lambda r: r.get(similarity_key, 0), reverse=True)
+    st.success(f"Found {len(filtered)} images")
     
     # Display in grid
     cols = st.columns(4)
     
-    for idx, result in enumerate(results):
+    for idx, result in enumerate(filtered):
         col_idx = idx % 4
         with cols[col_idx]:
             # Try multiple possible image path keys
@@ -337,17 +355,14 @@ def display_image_results(results, image_key='file_path', similarity_key='simila
 
 def show_similarity(result, similarity_key='similarity'):
     """Display similarity score with proper formatting"""
-    similarity = result.get(similarity_key, 0)
-    
-    # Handle negative scores and normalize display
-    if similarity < -1 or similarity > 1:
-        # Assume it's already a percentage or raw score
-        display_score = max(0, similarity)  # Show at least 0
-        st.write(f"Score: {display_score:.2f}%")
-    else:
-        # Convert from decimal to percentage
-        display_score = max(0, similarity * 100)  # Ensure non-negative
-        st.write(f"Similarity: {display_score:.2f}%")
+    raw = result.get(similarity_key, 0) or 0
+    scaled = result.get("_scaled_similarity")
+
+    if scaled is None:
+        # Fallback: map [-1,1] to [0,1]
+        scaled = max(0.0, min(1.0, (raw + 1.0) / 2.0))
+
+    st.write(f"Similarity: {scaled * 100:.2f}%")
 
 def save_uploaded_file(uploaded_file):
     """Save uploaded file to temporary location"""
@@ -420,7 +435,7 @@ if search_mode == "Text to Image":
                     if results:
                         st.write(f"Raw results sample: {results[0].keys()}")
                     
-                    display_image_results(results)
+                    display_image_results(results, min_similarity=0.0)
                         
                 except Exception as e:
                     st.error(f"Search error: {str(e)}")
@@ -454,7 +469,7 @@ elif search_mode == "Image to Image":
                         else:
                             # Search using semantic search
                             results = semantic_search.search_similar_images(temp_path, top_k=20)
-                            display_image_results(results)
+                            display_image_results(results, min_similarity=st.session_state.get("image_search_min_sim", 0.9))
                             
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
@@ -592,7 +607,8 @@ with st.sidebar:
     
     date_range = st.date_input("Date range", [])
     file_types = st.multiselect("File types", ["JPG", "PNG", "GIF", "BMP"])
-    min_similarity = st.slider("Min similarity", 0.0, 1.0, 0.5)
+    min_similarity = st.slider("Min similarity (Image → Image)", 0.0, 1.0, st.session_state.get("image_search_min_sim", 0.90))
+    st.session_state["image_search_min_sim"] = min_similarity
     
     # Debug section
     st.markdown("---")

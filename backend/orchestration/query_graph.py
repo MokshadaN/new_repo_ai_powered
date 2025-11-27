@@ -46,14 +46,14 @@ class QueryPipeline:
         # Add nodes
         workflow.add_node("detect_query_type", self.detect_query_type)
         workflow.add_node("generate_text_embedding", self.generate_text_embedding)
-        # workflow.add_node("generate_context_and_combine", self.generate_context_and_combine)
+        workflow.add_node("generate_context_and_combine", self.generate_context_and_combine)
         workflow.add_node("generate_image_embedding", self.generate_image_embedding)
         workflow.add_node("generate_face_embedding", self.generate_face_embedding)
         
     #     # Search nodes
         workflow.add_node("search_text_faiss", self.search_text_faiss)
         workflow.add_node("search_image_faiss_from_text", self.search_image_faiss_from_text)
-    #     workflow.add_node("search_image_faiss_from_image", self.search_image_faiss_from_image)
+        workflow.add_node("search_image_faiss_from_image", self.search_image_faiss_from_image)
         workflow.add_node("search_face_faiss", self.search_face_faiss)
         workflow.add_node("search_object_faiss", self.search_object_faiss)
         
@@ -71,15 +71,15 @@ class QueryPipeline:
             lambda state: state["query_type"],
             {
                 "text_only": "generate_text_embedding",
-                # "text_image": "generate_context_and_combine",
+                "text_image": "generate_context_and_combine",
                 "face_search": "generate_face_embedding",
-                # "object_search": "generate_image_embedding"
+                "object_search": "generate_image_embedding"
             }
         )
 
     #     # Text+Image path (parallel branches)
-    #     workflow.add_edge("generate_context_and_combine", "generate_text_embedding")
-    #     workflow.add_edge("generate_context_and_combine", "generate_image_embedding")
+        workflow.add_edge("generate_context_and_combine", "generate_text_embedding")
+        workflow.add_edge("generate_context_and_combine", "generate_image_embedding")
         
     #     # Text-based searches (parallel)
         workflow.add_edge("generate_text_embedding", "search_text_faiss")
@@ -87,7 +87,7 @@ class QueryPipeline:
         workflow.add_edge("generate_text_embedding", "search_object_faiss")
         
     #     # Image-based searches (parallel)
-    #     workflow.add_edge("generate_image_embedding", "search_image_faiss_from_image")
+        workflow.add_edge("generate_image_embedding", "search_image_faiss_from_image")
         workflow.add_edge("generate_face_embedding", "search_face_faiss")
         workflow.add_edge("generate_image_embedding", "search_object_faiss")
         
@@ -136,7 +136,7 @@ class QueryPipeline:
         )
         
     #     # Image searches always go to multimodal aggregator
-    #     workflow.add_edge("search_image_faiss_from_image", "aggregate_multimodal")
+        workflow.add_edge("search_image_faiss_from_image", "aggregate_multimodal")
         
     #     # Final steps
         workflow.add_edge("aggregate_text_only", "invoke_llm")
@@ -245,25 +245,25 @@ class QueryPipeline:
             logger.error(f"Error generating text embedding: {e}")
             return {}
     
-    # def generate_context_and_combine(self, state: QueryState) -> QueryState:
-    #     """Generate image context and combine with text"""
-    #     logger.info("Generating image context")
+    def generate_context_and_combine(self, state: QueryState) -> QueryState:
+        """Generate image context and combine with text"""
+        logger.info("Generating image context")
         
-    #     try:
-    #         context = self.vision_llm.generate_context_from_bytes(
-    #             state["query_image"],
-    #             state["query_text"]
-    #         )
+        try:
+            context = self.vision_llm.generate_context_from_bytes(
+                state["query_image"],
+                state["query_text"]
+            )
             
-    #         combined = f"{state['query_text']} (Image context: {context})"
+            combined = f"{state['query_text']} (Image context: {context})"
             
-    #         return {
-    #             "image_context": context,
-    #             "combined_query": combined
-    #         }
-    #     except Exception as e:
-    #         logger.error(f"Error generating context: {e}")
-    #         return {"combined_query": state["query_text"]}
+            return {
+                "image_context": context,
+                "combined_query": combined
+            }
+        except Exception as e:
+            logger.error(f"Error generating context: {e}")
+            return {"combined_query": state["query_text"]}
     
     def generate_image_embedding(self, state: QueryState) -> QueryState:
         """Generate image query embedding"""
@@ -364,18 +364,18 @@ class QueryPipeline:
             logger.error(f"Error searching images: {e}")
             return {"results_from_image_faiss_text": []}
     
-    # def search_image_faiss_from_image(self, state: QueryState) -> QueryState:
-    #     """Search image FAISS with image embedding"""
-    #     logger.info("Searching image FAISS (image query)")
+    def search_image_faiss_from_image(self, state: QueryState) -> QueryState:
+        """Search image FAISS with image embedding"""
+        logger.info("Searching image FAISS (image query)")
         
-    #     try:
-    #         results = self.store_manager.search_images(
-    #             state["image_query_embedding"]
-    #         )
-    #         return {"results_from_image_faiss_image": results}
-    #     except Exception as e:
-    #         logger.error(f"Error searching images: {e}")
-    #         return {"results_from_image_faiss_image": []}
+        try:
+            results = self.store_manager.search_images(
+                state["image_query_embedding"]
+            )
+            return {"results_from_image_faiss_image": results}
+        except Exception as e:
+            logger.error(f"Error searching images: {e}")
+            return {"results_from_image_faiss_image": []}
     
     def search_face_faiss(self, state: QueryState) -> QueryState:
         """Search face FAISS"""

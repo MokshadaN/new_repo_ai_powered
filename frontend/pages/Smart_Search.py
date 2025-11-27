@@ -1,10 +1,13 @@
 """
-Smart semantic search page
+Smart semantic searc
+h page
 """
 import streamlit as st
 import os
 import sys
 from pathlib import Path
+from backend.config.settings import settings  # add near other imports
+
 
 # Add backend to path
 backend_path = Path(__file__).parent.parent.parent / "backend"
@@ -133,7 +136,7 @@ if do_search or do_object_image:
                 st.markdown("### Detailed Results")
                 
                 reranked_results = result.get('reranked_results', []) or result.get('results_from_text_faiss', [])
-                grouped_results = _group_results_by_file(reranked_results)
+                grouped_results = _group_results_by_file(reranked_results)[:top_k]
 
                 if not grouped_results:
                     st.warning("No results found")

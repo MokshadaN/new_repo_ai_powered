@@ -414,3 +414,48 @@ class ImageEmbedder:
         except Exception as e:
             logger.error(f"Error generating embedding from bytes: {e}")
             return self._get_zero_embedding()
+
+    def generate_text_embedding(self, text: str) -> List[float]:
+        """
+        Generate a text embedding using the SigLIP text tower so text-to-image
+        queries are aligned with stored image embeddings.
+        """
+        try:
+            inputs = self.processor(
+                text=text,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+            )
+
+            device = next(self.model.parameters()).device
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                outputs = self.model.get_text_features(**inputs)
+                embedding = outputs.squeeze().cpu().numpy()
+
+            if embedding.ndim == 0:
+                embedding = np.array([embedding])
+            elif embedding.ndim > 1:
+                embedding = embedding.flatten()
+
+            norm = np.linalg.norm(embedding)
+            if norm > 0:
+                embedding = embedding / norm
+            else:
+                logger.warning("Zero norm SigLIP text embedding detected")
+                return self._get_zero_embedding()
+
+            if len(embedding) != self.model_config.dimension:
+                logger.warning(
+                    "SigLIP text embedding dimension mismatch: %d vs %d",
+                    len(embedding),
+                    self.model_config.dimension,
+                )
+                embedding = self._adjust_embedding_dimension(embedding)
+
+            return embedding.tolist()
+        except Exception as e:
+            logger.error(f"Error generating SigLIP text embedding: {e}")
+            return self._get_zero_embedding()

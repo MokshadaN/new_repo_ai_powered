@@ -115,12 +115,28 @@ class VectorStoreManager:
         ]
         return self.faiss_images.store(processed, metadata)
 
-    # def search_images(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
-    #     query_embedding = self.ensure_correct_dimension(
-    #         query_embedding, settings.image_embedding_dimension
-    #     )
-    #     top_k = top_k or settings.top_k_results
-    #     return self.faiss_images.search(query_embedding, top_k)
+    def search_images(self, query_embedding: List[float], top_k: int | None = None) -> List[Dict]:
+        """
+        Search the image FAISS index with normalization to match stored vectors.
+        """
+        query_embedding = self.ensure_correct_dimension(
+            query_embedding, settings.image_embedding_dimension
+        )
+
+        # Flatten list-of-list
+        if isinstance(query_embedding, list) and query_embedding and isinstance(query_embedding[0], list):
+            query_embedding = query_embedding[0]
+
+        # Normalize to unit length
+        vec = np.asarray(query_embedding, dtype=np.float32)
+        norm = np.linalg.norm(vec)
+        if norm == 0:
+            logger.warning("Image search skipped: zero-norm query embedding")
+            return []
+        query_embedding = (vec / norm).tolist()
+
+        top_k = top_k or settings.top_k_results
+        return self.faiss_images.search(query_embedding, top_k)
 
     def search_images_by_text(
         self, text_embedding: List[float], top_k: int | None = None
