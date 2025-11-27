@@ -366,6 +366,37 @@ def save_uploaded_file(uploaded_file):
         logger.error(f"Error saving uploaded file: {e}")
         return None
 
+def filter_object_hits(results, needle: str, min_confidence: float = 0.25):
+    """Keep only object hits that match the label text and meet a confidence floor."""
+    if not results:
+        return []
+
+    query = (needle or "").strip().lower()
+    filtered = []
+    for res in results:
+        res_type = str(res.get("type", "")).lower()
+        label = str(res.get("label", "")).lower()
+        confidence = res.get("confidence", res.get("similarity", 0)) or 0
+
+        # Only keep object-type hits unless the label explicitly matches the query
+        if res_type and res_type != "object" and (not query or query not in label):
+            continue
+
+        # Enforce label match when a query is provided
+        if query and label and query not in label:
+            continue
+
+        if confidence < min_confidence:
+            continue
+
+        # Normalize fields so the UI can display consistently
+        cleaned = dict(res)
+        cleaned["confidence"] = confidence
+        cleaned.setdefault("label", label or needle or "object")
+        filtered.append(cleaned)
+
+    return sorted(filtered, key=lambda r: r.get("confidence", 0), reverse=True)
+
 # Main search logic
 if search_mode == "Text to Image":
     st.markdown("### Search images using text descriptions")
@@ -525,13 +556,15 @@ else:  # Object Search
                     image_bytes = uploaded_obj.read() if uploaded_obj else None
                     result = query_pipeline.run(object_query, image_bytes)
 
-                    reranked_results = result.get('reranked_results', []) or result.get('results_from_object_faiss', [])
-                    if not reranked_results:
+                    raw_results = result.get('reranked_results', []) or result.get('results_from_object_faiss', [])
+                    object_hits = filter_object_hits(raw_results, object_query)
+
+                    if not object_hits:
                         st.warning(f"No images found with '{object_query or 'image'}'")
                     else:
-                        st.success(f"Found {len(reranked_results)} object hits")
+                        st.success(f"Found {len(object_hits)} object hits")
                         cols = st.columns(4)
-                        for idx, res in enumerate(reranked_results):
+                        for idx, res in enumerate(object_hits):
                             with cols[idx % 4]:
                                 img_path = res.get('image') or res.get('image_path') or res.get('file_path')
                                 if not img_path or not os.path.exists(str(img_path)):
