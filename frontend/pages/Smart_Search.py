@@ -154,7 +154,7 @@ if do_search or do_object_image:
                             else:
                                 st.markdown(chunk.get('text', 'N/A'))
                                 st.metric("Similarity", f"{chunk.get('similarity', 0):.2%}")
-
+                            st.markdown(chunk.get('text', 'N/A'))
                             st.badge(chunk.get('type', 'unknown'))
                             st.divider()
 

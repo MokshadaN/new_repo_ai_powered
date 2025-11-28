@@ -252,7 +252,7 @@ st.markdown("Search images by content, faces, or objects")
 
 # Default similarity threshold (used only for Image→Image flow)
 if "image_search_min_sim" not in st.session_state:
-    st.session_state["image_search_min_sim"] = 0.90
+    st.session_state["image_search_min_sim"] = 0.91
 
 # Search mode selector
 search_mode = st.radio(
@@ -469,7 +469,7 @@ elif search_mode == "Image to Image":
                         else:
                             # Search using semantic search
                             results = semantic_search.search_similar_images(temp_path, top_k=20)
-                            display_image_results(results, min_similarity=st.session_state.get("image_search_min_sim", 0.9))
+                            display_image_results(results, min_similarity=st.session_state.get("image_search_min_sim", 0.91))
                             
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
@@ -607,7 +607,7 @@ with st.sidebar:
     
     date_range = st.date_input("Date range", [])
     file_types = st.multiselect("File types", ["JPG", "PNG", "GIF", "BMP"])
-    min_similarity = st.slider("Min similarity (Image → Image)", 0.0, 1.0, st.session_state.get("image_search_min_sim", 0.90))
+    min_similarity = st.slider("Min similarity (Image → Image)", 0.0, 1.0, st.session_state.get("image_search_min_sim", 0.91))
     st.session_state["image_search_min_sim"] = min_similarity
     
     # Debug section
@@ -621,3 +621,4 @@ with st.sidebar:
         test_images = list(Path(".").glob("*.jpg")) + list(Path(".").glob("*.png"))
         if test_images:
             st.write(f"Found test images: {[img.name for img in test_images[:3]]}")
+

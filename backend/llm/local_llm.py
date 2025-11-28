@@ -234,7 +234,30 @@ class VisionLLM:
     def generate_context(self, images: List[Any], query: str = "") -> str:
         """Generate textual context from images using a vision-capable Ollama model."""
         try:
-            b64_images = [enc for enc in (self._encode_image(i) for i in images) if enc]
+            # Deduplicate inputs by path and content to avoid duplicate descriptions
+            b64_images = []
+            seen: set[str] = set()
+            for img in images:
+                # Prefer path-based dedupe when available
+                path = None
+                if isinstance(img, str):
+                    path = str(Path(img).resolve())
+                elif isinstance(img, dict) and "path" in img:
+                    path = str(Path(img["path"]).resolve())
+
+                if path and path in seen:
+                    continue
+                if path:
+                    seen.add(path)
+
+                enc = self._encode_image(img)
+                if not enc:
+                    continue
+                if enc in seen:
+                    continue
+                seen.add(enc)
+                b64_images.append(enc)
+
             if not b64_images:
                 logger.warning("No encodable images provided to VisionLLM.generate_context")
                 return ""

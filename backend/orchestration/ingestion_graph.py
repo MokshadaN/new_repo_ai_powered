@@ -448,10 +448,9 @@ class IngestionPipeline:
             # Rich, search-friendly description prompt (objects, colors, text, setting, actions).
             query = (
                 "Describe each image in vivid, search-friendly detail so it is easy to retrieve by query. "
-                "Mention key objects, their colors, size, material, and position; any readable text; "
-                "the scene/setting; actions/events; camera/view (e.g., close-up, top-down); lighting; "
-                "and counts of notable objects. Example: 'A bright red rubber ball on green grass, single ball, "
-                "daylight, close-up shot'."
+                "Mention key objects, colors, text, setting, and actions present in the image which can be used to unqiuely identify the image and general characteristics like girl , red , number of people in not more than 50 words with unqiue tags "
+                "Give only the context nothing before and nothing after it",
+                "Do not add anything of your own just describe the image, be precise and concise."
             )
 
             context = self.vision_llm.generate_context(images, query=query)
@@ -485,34 +484,28 @@ class IngestionPipeline:
             chunks = state.get("image_context_chunks") or []
 
             if embeddings:
-                # Ensure chunk texts align with the number of embeddings and avoid placeholder labels
-                emb_count = len(embeddings) if isinstance(embeddings, list) else 1
-                if not chunks:
-                    # Fallback to the full generated context if chunking was not provided
-                    fallback_text = state.get("image_context") or "Image context"
-                    chunk_texts = [fallback_text] * emb_count
-                else:
-                    chunk_texts = list(chunks)
-                    if len(chunk_texts) < emb_count:
-                        chunk_texts.extend([chunk_texts[-1]] * (emb_count - len(chunk_texts)))
-                    elif len(chunk_texts) > emb_count:
-                        chunk_texts = chunk_texts[:emb_count]
+                # For image context, keep a single coherent entry (no chunking)
+                def _to_single_vector(vecs):
+                    if isinstance(vecs, list) and vecs and isinstance(vecs[0], list):
+                        # Mean all returned vectors into one
+                        return [sum(vals) / len(vals) for vals in zip(*vecs)]
+                    return vecs
+
+                single_embedding = _to_single_vector(embeddings)
+                full_context = state.get("image_context") or (chunks[0] if chunks else "Image context")
+                chunk_texts = [full_context]
 
                 file_path = state.get("current_file", "unknown")
-                previews = [
-                    (c[:120] + ("..." if len(c) > 120 else "")) if isinstance(c, str) else c
-                    for c in chunk_texts
-                ]
                 logger.info(
                     "Storing image context: file=%s embeddings=%d chunks=%d",
                     file_path,
-                    emb_count,
-                    len(chunk_texts),
+                    1 if single_embedding is not None else 0,
+                    1,
                 )
-                print("Image context metadata preview:", {"file_path": file_path, "chunks": previews})
+                print("Image context metadata preview:", {"file_path": file_path, "chunks": chunk_texts})
 
                 self.store_manager.store_text(
-                    embedding=embeddings,
+                    embedding=single_embedding,
                     chunks=chunk_texts,
                     file_path=state.get("current_file", "unknown"),
                 )
