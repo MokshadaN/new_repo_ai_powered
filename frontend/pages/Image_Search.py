@@ -261,21 +261,24 @@ search_mode = st.radio(
     horizontal=True
 )
 
-# Initialize search engines
-def initialize_search_engines():
-    """Initialize search engines with error handling"""
+# Initialize search engines once per app (cached resource to avoid reloading per rerun)
+@st.cache_resource(show_spinner="Loading search engines...")
+def load_search_engines():
+    """Initialize search engines with error handling."""
     try:
         semantic_search = SemanticSearch()
         face_search = FaceSearch()
         query_pipeline = QueryPipeline()
         return semantic_search, face_search, query_pipeline
     except Exception as e:
-        st.error(f"Failed to initialize search engines: {e}")
         logger.error(f"Search engine initialization error: {e}")
-        return None, None, None
+        raise
 
-# Initialize and check if successful
-semantic_search, face_search, query_pipeline = initialize_search_engines()
+try:
+    semantic_search, face_search, query_pipeline = load_search_engines()
+except Exception as init_error:
+    st.error(f"Failed to initialize search engines: {init_error}")
+    st.stop()
 if semantic_search is None or face_search is None or query_pipeline is None:
     st.stop()
 
