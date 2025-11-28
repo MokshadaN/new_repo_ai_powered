@@ -2,6 +2,7 @@
 Semantic search implementation
 """
 from typing import List, Dict, Any, Optional
+import re
 from backend.vector_store.store_manager import VectorStoreManager
 from backend.embeddings.embedding_manager import EmbeddingManager
 from backend.utils.logger import app_logger as logger
@@ -25,7 +26,10 @@ class SemanticSearch:
             # Search all stores
             results = {
                 'text': self.store_manager.search_text(text_query_embedding, top_k),
-                'images': self.store_manager.search_images(image_query_embedding, top_k),
+                'images': self._filter_image_results(
+                    query,
+                    self.store_manager.search_images(image_query_embedding, top_k)
+                ),
                 'faces': self.store_manager.search_faces(image_query_embedding, top_k) if hasattr(self.store_manager, "search_faces") else [],
                 'objects': self.store_manager.search_objects(image_query_embedding, top_k) if hasattr(self.store_manager, "search_objects") else [],
             }
@@ -44,7 +48,10 @@ class SemanticSearch:
             if search_type == 'text':
                 return self.store_manager.search_text(query_embedding, top_k)
             elif search_type == 'image':
-                return self.store_manager.search_images(query_embedding, top_k)
+                return self._filter_image_results(
+                    query,
+                    self.store_manager.search_images(query_embedding, top_k)
+                )
             elif search_type == 'face':
                 return self.store_manager.search_faces(query_embedding, top_k) if hasattr(self.store_manager, "search_faces") else []
             elif search_type == 'object':
@@ -68,6 +75,46 @@ class SemanticSearch:
         except Exception as e:
             logger.error(f"Error in image-to-image search: {e}")
             return []
+
+    def _filter_image_results(self, query: str, results: List[Dict]) -> List[Dict]:
+        """
+        Keep top match, then keep only items whose filename contains a query token.
+        This helps drop unrelated hits like objects when searching for people.
+        """
+        if not results:
+            return []
+
+        try:
+            tokens = [t for t in re.findall(r"[a-zA-Z0-9]+", query.lower()) if len(t) > 2]
+            sorted_results = sorted(results, key=lambda r: r.get("similarity", 0), reverse=True)
+
+            filtered: List[Dict] = []
+            for idx, res in enumerate(sorted_results):
+                # Always keep the best-scoring hit so we don't return empty
+                if idx == 0:
+                    filtered.append(res)
+                    continue
+
+                path = (
+                    res.get("file_path")
+                    or res.get("path")
+                    or res.get("image_path")
+                    or res.get("image")
+                    or ""
+                )
+                path_lower = str(path).lower()
+
+                if tokens and any(tok in path_lower for tok in tokens):
+                    filtered.append(res)
+
+            # If filtering removed everything beyond the top, return top 3 as fallback
+            if len(filtered) == 1 and len(sorted_results) > 1:
+                filtered = sorted_results[:3]
+
+            return filtered
+        except Exception as e:
+            logger.error(f"Error filtering image results: {e}")
+            return results or []
 
     def _extract_query_vector(self, query: str, target: str = "text") -> List[float]:
         """

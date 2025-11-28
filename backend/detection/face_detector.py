@@ -108,9 +108,20 @@
 Face detection using InsightFace (superior accuracy)
 """
 from typing import Optional, List, Dict, Any
+import os
+import logging
+import warnings
 import cv2
 import numpy as np
 from backend.utils.logger import app_logger as logger
+
+# Quiet noisy backends before importing insightface / tensorflow
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+os.environ.setdefault("INSIGHTFACE_LOG_LEVEL", "ERROR")
+warnings.filterwarnings("ignore", category=UserWarning, module="tensorflow")
+logging.getLogger("tensorflow").setLevel(logging.ERROR)
+logging.getLogger("onnxruntime").setLevel(logging.ERROR)
+logging.getLogger("insightface").setLevel(logging.ERROR)
 
 try:
     from insightface.app import FaceAnalysis
