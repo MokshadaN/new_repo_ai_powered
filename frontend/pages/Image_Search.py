@@ -237,6 +237,8 @@ from pathlib import Path
 from PIL import Image
 import tempfile
 
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tiff"}
+
 backend_path = Path(__file__).parent.parent.parent / "backend"
 sys.path.insert(0, str(backend_path))
 
@@ -329,6 +331,13 @@ def display_image_results(results, image_key='file_path', similarity_key='simila
                 st.text(f"Path: {os.path.basename(img_path)}")
                 show_similarity(result, similarity_key)
                 continue
+
+            # Skip non-image files (e.g., PDFs) to avoid broken previews
+            if not is_image_file(img_path):
+                st.write(f"{os.path.basename(img_path)}")
+                show_similarity(result, similarity_key)
+                st.caption("Preview not available for non-image files")
+                continue
             
             try:
                 # Load and display image
@@ -414,6 +423,13 @@ def filter_object_hits(results, needle: str, min_confidence: float = 0.25):
         filtered.append(cleaned)
 
     return sorted(filtered, key=lambda r: r.get("confidence", 0), reverse=True)
+
+def is_image_file(path: str) -> bool:
+    """Lightweight check to avoid previewing non-image files."""
+    try:
+        return Path(path).suffix.lower() in IMAGE_EXTS
+    except Exception:
+        return False
 
 # Main search logic
 if search_mode == "Text to Image":
@@ -572,7 +588,12 @@ else:  # Object Search
                 try:
                     # Prepare image bytes if provided
                     image_bytes = uploaded_obj.read() if uploaded_obj else None
-                    result = query_pipeline.run(object_query, image_bytes)
+                    result = query_pipeline.run(
+                        object_query,
+                        image_bytes,
+                        query_type="object_search" if image_bytes else None,
+                        skip_llm=True,
+                    )
 
                     raw_results = result.get('reranked_results', []) or result.get('results_from_object_faiss', [])
                     object_hits = filter_object_hits(raw_results, object_query)
@@ -588,6 +609,15 @@ else:  # Object Search
                                 if not img_path or not os.path.exists(str(img_path)):
                                     st.error("Image not found")
                                     continue
+
+                                # Skip preview for non-image files (e.g., PDF)
+                                if not is_image_file(img_path):
+                                    label = res.get('label', 'object')
+                                    confidence = res.get('confidence', res.get('similarity', 0))
+                                    st.write(f"{label} ({confidence:.2%})")
+                                    st.caption(f"No preview for non-image file: {Path(img_path).name}")
+                                    continue
+
                                 try:
                                     img = Image.open(img_path)
                                     img.thumbnail((200, 200))
