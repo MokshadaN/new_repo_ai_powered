@@ -62,6 +62,7 @@ class QueryState(TypedDict):
     results_from_image_faiss_image: List[Dict]
     results_from_face_faiss: List[Dict]
     results_from_object_faiss: List[Dict]
+    skip_llm: bool | None
     
     # Aggregation
     aggregated_context: str

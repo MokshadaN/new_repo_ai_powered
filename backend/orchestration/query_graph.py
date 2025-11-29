@@ -1,9 +1,8 @@
-#Langgraph Query Pipeline
 """
 LangGraph-based query pipeline
 Follows the architecture from Image 2
 """
-from typing import Literal, Dict, Any
+from typing import Literal, Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
 import json
@@ -150,9 +149,23 @@ class QueryPipeline:
     def detect_query_type(self, state: QueryState) -> QueryState:
         """Detect query type"""
         logger.info("Detecting query type")
-        
-        query_text = state["query_text"].lower()
+
         has_image = state.get("query_image") is not None
+
+        # Allow callers to pre-set query_type (e.g., object search endpoint)
+        provided_type = state.get("query_type")
+        if provided_type:
+            if provided_type == "object_search":
+                # For object search we always skip LLM, even on text-only flow
+                if not has_image:
+                    logger.info("Object search requested without image; routing as text_only (skip_llm=True)")
+                    return {"query_type": "text_only", "skip_llm": True}
+                logger.info("Using provided query type: %s (skip_llm=True)", provided_type)
+                return {"query_type": provided_type, "skip_llm": True}
+            logger.info("Using provided query type: %s", provided_type)
+            return {"query_type": provided_type}
+
+        query_text = state["query_text"].lower()
         
         # Determine query type
         if "face" in query_text or "person" in query_text or "who" in query_text:
@@ -474,7 +487,6 @@ class QueryPipeline:
     def aggregate_multimodal(self, state: QueryState) -> QueryState:
         """Aggregate all multimodal search results"""
         logger.info("Aggregating multimodal results")
-        
         text_results = state.get("results_from_text_faiss", [])
         image_text_results = state.get("results_from_image_faiss_text", [])
         image_results = state.get("results_from_image_faiss_image", [])
@@ -524,6 +536,18 @@ class QueryPipeline:
     def invoke_llm(self, state: QueryState) -> QueryState:
         """Generate final response using LLM"""
         logger.info("Invoking LLM for final response")
+
+        # Skip LLM generation for face/object searches or when explicitly disabled
+        if state.get("skip_llm") or state.get("query_type") in {"face_search", "object_search"}:
+            logger.info(
+                "Skipping LLM invocation (query_type=%s, skip_llm=%s)",
+                state.get("query_type"),
+                state.get("skip_llm"),
+            )
+            return {
+                "final_response": "",
+                "insights": {},
+            }
         
         try:
             print("Combined query")
@@ -558,13 +582,21 @@ class QueryPipeline:
         """
         return "aggregate_text_only"
     
-    def run(self, query_text: str, query_image: bytes = None) -> Dict:
+    def run(
+        self,
+        query_text: str,
+        query_image: bytes | None = None,
+        query_type: Optional[str] = None,
+        skip_llm: bool = False,
+    ) -> Dict:
         """Execute the query pipeline"""
         logger.info(f"Starting query pipeline: {query_text[:50]}...")
         print("Query Pipeline 1")
         initial_state = {
             "query_text": query_text,
             "query_image": query_image,
+            "query_type": query_type,
+            "skip_llm": skip_llm,
             "results_from_text_faiss": [],
             "results_from_image_faiss_text": [],
             "results_from_image_faiss_image": [],

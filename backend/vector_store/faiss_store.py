@@ -142,13 +142,15 @@ from backend.utils.logger import app_logger as logger
 
 
 class FAISSStore:
-    """FAISS-based vector store with dimension validation"""
+    """FAISS-based vector store with ID tracking and delete support."""
 
     def __init__(self, store_name: str, dimension: int):
         self.store_name = store_name
         self.dimension = dimension
-        self.index = None
-        self.metadata_store: List[Dict] = []
+        self.index = None  # IDMap over FlatIP
+        self.metadata_map: Dict[int, Dict] = {}  # id -> metadata
+        self.path_id_map: Dict[str, List[int]] = {}  # path -> [ids]
+        self.next_id: int = 0
 
         # Paths
         self.index_path = settings.faiss_path / f"{store_name}.index"
@@ -157,83 +159,128 @@ class FAISSStore:
         # Initialize or load
         self._initialize_store()
 
-        logger.info(f"FAISS store '{store_name}' ready with {self.get_count()} vectors")
+        logger.info(
+            "FAISS store '%s' ready with %d vectors (next_id=%d)",
+            store_name,
+            self.get_count(),
+            self.next_id,
+        )
 
     def _initialize_store(self):
-        """Initialize or load FAISS index"""
+        """Initialize or load FAISS index + metadata/ID mapping."""
         if self.index_path.exists():
             try:
                 self.index = faiss.read_index(str(self.index_path))
+                # Ensure we have an IDMap wrapper
+                if not isinstance(self.index, faiss.IndexIDMap):
+                    self.index = faiss.IndexIDMap(self.index)
                 if self.metadata_path.exists():
-                    with open(self.metadata_path, 'rb') as f:
-                        self.metadata_store = pickle.load(f)
-                logger.info(f"Loaded existing FAISS index: {self.store_name}")
+                    with open(self.metadata_path, "rb") as f:
+                        data = pickle.load(f)
+                        if isinstance(data, dict) and "metadata_map" in data:
+                            self.metadata_map = data.get("metadata_map", {})
+                            self.path_id_map = data.get("path_id_map", {})
+                            self.next_id = data.get("next_id", 0)
+                        else:
+                            # Backward compatibility: old metadata list
+                            self.metadata_map = {idx: meta for idx, meta in enumerate(data)}
+                            self.path_id_map = {}
+                            for idx, meta in enumerate(data):
+                                p = meta.get("file_path") or meta.get("image") or meta.get("path")
+                                if not p:
+                                    continue
+                                self.path_id_map.setdefault(str(p), []).append(idx)
+                            self.next_id = len(self.metadata_map)
+                logger.info("Loaded existing FAISS index: %s", self.store_name)
             except Exception as e:
-                logger.error(f"Error loading FAISS index: {e}")
+                logger.error("Error loading FAISS index: %s", e)
                 self._create_new_index()
         else:
             self._create_new_index()
 
     def _create_new_index(self):
-        """Create new FAISS index"""
-        # IndexFlatIP with normalized vectors for cosine similarity
-        self.index = faiss.IndexFlatIP(self.dimension)
-        self.metadata_store = []
-        logger.info(f"Created new FAISS index: {self.store_name}")
+        """Create new FAISS index with ID mapping."""
+        base = faiss.IndexFlatIP(self.dimension)
+        self.index = faiss.IndexIDMap(base)
+        self.metadata_map = {}
+        self.path_id_map = {}
+        self.next_id = 0
+        logger.info("Created new FAISS index: %s", self.store_name)
 
     def _validate_embeddings(self, embeddings: List[List[float]]) -> bool:
-        """Ensure all embeddings have the correct dimension"""
+        """Ensure all embeddings have the correct dimension."""
         for emb in embeddings:
             if len(emb) != self.dimension:
                 logger.error(
-                    f"Embedding dimension mismatch: expected {self.dimension}, got {len(emb)}"
+                    "Embedding dimension mismatch: expected %d, got %d",
+                    self.dimension,
+                    len(emb),
                 )
                 return False
         return True
 
     def store(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
-        """Store embeddings with metadata"""
+        """Store embeddings with metadata and track IDs per path."""
         if not self._validate_embeddings(embeddings):
+            return False
+        if len(embeddings) != len(metadata):
+            logger.error("Embeddings and metadata length mismatch")
             return False
 
         try:
-            # Log file names being stored
-            print("Metdata Type", type(metadata))
-            # print(metadata[0])
-            print("In FAISS store")
-            for meta in metadata:
-                file_path = meta.get('file_path', 'unknown')
-                print(f"Storing in FAISS ({self.store_name}): {file_path}")
-                logger.info(f"Storing in FAISS ({self.store_name}): {file_path}")
-            
             vectors = np.array(embeddings, dtype=np.float32)
             faiss.normalize_L2(vectors)
-            self.index.add(vectors)
 
-            # Store metadata
-            self.metadata_store.extend(metadata)
+            ids = np.arange(self.next_id, self.next_id + len(embeddings), dtype=np.int64)
+            self.index.add_with_ids(vectors, ids)
 
-            # Save index and metadata
+            for idx, meta in zip(ids, metadata):
+                path = meta.get("file_path") or meta.get("image") or meta.get("path") or ""
+                path = str(path)
+                self.metadata_map[int(idx)] = meta
+                if path:
+                    self.path_id_map.setdefault(path, []).append(int(idx))
+                logger.info(f"Storing in FAISS ({self.store_name}): {path} (id={idx})")
+
+            self.next_id += len(embeddings)
             self._save()
-
-            logger.debug(f"Stored {len(embeddings)} vectors in {self.store_name}")
+            logger.debug("Stored %d vectors in %s", len(embeddings), self.store_name)
             return True
-
         except Exception as e:
-            logger.error(f"Error storing in FAISS: {e}")
+            logger.error("Error storing in FAISS: %s", e)
+            return False
+
+    def delete(self, path: str) -> bool:
+        """Delete all embeddings/metadata associated with a path."""
+        key = str(path)
+        ids = self.path_id_map.get(key, [])
+        if not ids:
+            logger.info("No embeddings to delete for path: %s", key)
+            return False
+        try:
+            id_array = np.array(ids, dtype=np.int64)
+            self.index.remove_ids(id_array)
+            for i in ids:
+                self.metadata_map.pop(i, None)
+            self.path_id_map.pop(key, None)
+            self._save()
+            logger.info(f"Deleted {len(ids)} embeddings for path {key} from {self.store_name}")
+            return True
+        except Exception as e:
+            logger.error("Error deleting from FAISS (%s): %s", self.store_name, e)
             return False
 
     def search(self, query_embedding: List[float], top_k: int = 10) -> List[Dict]:
-        """Search for similar vectors"""
+        """Search for similar vectors."""
         if len(query_embedding) != self.dimension:
             logger.error(
-                f"Query embedding dimension mismatch: expected {self.dimension}, got {len(query_embedding)}"
+                "Query embedding dimension mismatch: expected %d, got %d",
+                self.dimension,
+                len(query_embedding),
             )
             return []
-
-        if self.index.ntotal == 0:
+        if self.index is None or self.index.ntotal == 0:
             return []
-
         try:
             query_vector = np.array([query_embedding], dtype=np.float32)
             faiss.normalize_L2(query_vector)
@@ -243,33 +290,36 @@ class FAISSStore:
 
             results = []
             for distance, idx in zip(distances[0], indices[0]):
-                if idx < len(self.metadata_store):
-                    res = self.metadata_store[idx].copy()
-                    res['similarity'] = float(distance)
-                    res['distance'] = float(1 - distance)
-                    results.append(res)
-            print("Faiss result")
+                meta = self.metadata_map.get(int(idx))
+                if meta is None:
+                    continue
+                res = meta.copy()
+                res["similarity"] = float(distance)
+                res["distance"] = float(1 - distance)
+                results.append(res)
             logger.info(f"FAISS search returned {len(results)} results (requested {top_k})")
             return results
-
         except Exception as e:
-            logger.error(f"Error searching FAISS: {e}")
+            logger.error("Error searching FAISS: %s", e)
             return []
 
     def _save(self):
-        """Save index and metadata"""
+        """Save index and metadata/id maps."""
         try:
             faiss.write_index(self.index, str(self.index_path))
-            with open(self.metadata_path, 'wb') as f:
-                pickle.dump(self.metadata_store, f)
+            data = {
+                "metadata_map": self.metadata_map,
+                "path_id_map": self.path_id_map,
+                "next_id": self.next_id,
+            }
+            with open(self.metadata_path, "wb") as f:
+                pickle.dump(data, f)
         except Exception as e:
-            logger.error(f"Error saving FAISS index: {e}")
+            logger.error("Error saving FAISS index: %s", e)
 
     def get_count(self) -> int:
-        """Get number of vectors"""
         return self.index.ntotal if self.index else 0
 
     def clear(self):
-        """Clear the index"""
         self._create_new_index()
         self._save()

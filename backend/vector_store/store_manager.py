@@ -108,7 +108,7 @@ class VectorStoreManager:
     # # Image operations
     def store_images(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
         for meta in metadata:
-            logger.info("Storing image embedding for: %s", meta.get("file_path", "unknown"))
+            logger.info(f"Storing image embedding for: {meta.get('file_path', 'unknown')}")
 
         processed = [
             self.ensure_correct_dimension(e, settings.image_embedding_dimension) for e in embeddings
@@ -255,9 +255,9 @@ class VectorStoreManager:
 
     # Object operations
     def store_objects(self, embeddings: List[List[float]], metadata: List[Dict]) -> bool:
-        logger.info("store_objects: incoming embeddings=%d metadata=%d", len(embeddings), len(metadata))
+        logger.info(f"store_objects: incoming embeddings={len(embeddings)} metadata={len(metadata)}")
         for meta in metadata:
-            logger.info("Storing object embedding for: %s (label=%s, conf=%.3f)", meta.get("image", "unknown"), meta.get("label"), float(meta.get("confidence", 0)))
+            logger.info(f"Storing object embedding for: {meta.get('image', 'unknown')} (label={meta.get('label')}, conf={float(meta.get('confidence', 0)):.3f})")
 
         processed = [
             self.ensure_correct_dimension(e, settings.object_embedding_dimension) for e in embeddings
@@ -269,7 +269,7 @@ class VectorStoreManager:
             if "type" not in meta:
                 meta["type"] = "object"
         ok = self.faiss_objects.store(processed, metadata)
-        logger.info("store_objects: stored=%s total_index=%d", ok, self.faiss_objects.get_count())
+        logger.info(f"store_objects: stored={ok} total_index={self.faiss_objects.get_count()}")
         return ok
 
     def search_objects(self, query_embedding: Any = None, top_k: int | None = None, label_query: str | None = None) -> List[Dict]:
@@ -333,14 +333,11 @@ class VectorStoreManager:
         if filtered:
             sims = [r.get("similarity", 0) for r in filtered]
             logger.info(
-                "Object search similarity range (filtered): min=%.4f, max=%.4f",
-                min(sims),
-                max(sims),
+                f"Object search similarity range (filtered): min={min(sims):.4f}, max={max(sims):.4f}"
             )
         else:
             logger.info(
-                "Object search returned no results above similarity threshold %.2f",
-                MIN_SIMILARITY,
+                f"Object search returned no results above similarity threshold {MIN_SIMILARITY:.2f}"
             )
         # Deduplicate by (image_path, label) keeping highest similarity
         best = {}
@@ -382,12 +379,24 @@ class VectorStoreManager:
 
     def check_file_exists(self, file_path: str) -> bool:
         """Check FAISS metadata stores for a given file path."""
-        def contains_path(metadata_list: List[Dict]) -> bool:
-            return any(meta.get("file_path") == file_path for meta in metadata_list)
+        def contains_path(meta_map) -> bool:
+            vals = meta_map.values() if isinstance(meta_map, dict) else meta_map
+            return any(meta.get("file_path") == file_path for meta in vals)
 
-        return contains_path(self.faiss_text.metadata_store) or contains_path(
-            self.faiss_images.metadata_store
+        return contains_path(getattr(self.faiss_text, "metadata_map", {})) or contains_path(
+            getattr(self.faiss_images, "metadata_map", {})
         )
+
+    def delete_path(self, path: str) -> bool:
+        """Delete all embeddings for a path across all stores."""
+        deleted_any = False
+        for store in [self.faiss_text, self.faiss_images, self.faiss_faces, self.faiss_objects]:
+            try:
+                if store.delete(path):
+                    deleted_any = True
+            except Exception as exc:
+                logger.error("Failed deleting %s from store %s: %s", path, getattr(store, "store_name", "?"), exc)
+        return deleted_any
 
     def search_text(self, query_embedding: list, top_k: int | None = None) -> list:
         """
